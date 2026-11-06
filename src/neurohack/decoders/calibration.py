@@ -1,4 +1,9 @@
-"""Temperature scaling (Guo et al. 2017) and expected calibration error."""
+"""Temperature scaling (Guo et al. 2017), expected calibration error, and the no-SSVEP score floor.
+
+Floor: softmax confidence is relative (which target is least bad), so with NO flicker on screen the
+decoder is just as confident (LIVE 6 Nov, G3 rest periods: p_max >= theta in 48% of 1 s windows, 58% of
+picks = 8.57 Hz). The floor is an absolute gate on the winning raw score, fitted on no-flicker windows.
+"""
 
 from __future__ import annotations
 
@@ -47,6 +52,50 @@ def ece(probs: np.ndarray, labels: np.ndarray, n_bins: int = 10) -> float:
     )
 
 
+def fit_null_floor(
+    rest_max_by_len: dict[float, np.ndarray], quantile: float, min_windows: int
+) -> dict:
+    """Fit floor(L) = coef * L**exponent through the `quantile` of the winning score on no-flicker
+    windows of each length L (log-log least squares). Lengths with < min_windows windows are skipped.
+
+    Noise CCA scores shrink with window length (~1/L for squared correlations; LIVE G3 rest 1-1.5 s:
+    exponent -0.92), so the fit extrapolates to the longer windows that rest periods cannot supply.
+    One usable length -> exponent fixed at -1.
+    """
+    pts = {
+        float(L): float(np.quantile(v, quantile))
+        for L, v in sorted(rest_max_by_len.items())
+        if len(v) >= min_windows
+    }
+    if not pts:
+        raise ValueError("no window length has enough no-flicker windows for a floor")
+    ls, qs = np.log(list(pts)), np.log(list(pts.values()))
+    if len(pts) >= 2:
+        b, a = np.polyfit(ls, qs, 1)
+    else:
+        b, a = -1.0, float(qs[0] - (-1.0) * ls[0])
+    return {
+        "coef": float(np.exp(a)),
+        "exponent": float(b),
+        "quantile": quantile,
+        "per_length": pts,
+        "n_windows": {float(L): len(v) for L, v in rest_max_by_len.items()},
+    }
+
+
+def null_floor_at(floor: dict | None, window_s: float) -> float:
+    """Floor for a window length (0 if no floor -> gate disabled)."""
+    if not floor:
+        return 0.0
+    return float(floor["coef"] * window_s ** floor["exponent"])
+
+
+def floor_mask(scores_by_len: np.ndarray, lengths: list[float], floor: dict | None) -> np.ndarray:
+    """[n_trials, n_lens] True where the winning score clears the floor at that length."""
+    thr = np.array([null_floor_at(floor, L) for L in lengths])
+    return scores_by_len.max(axis=-1) >= thr[None, :]
+
+
 def fit_policy(
     scores_by_len: np.ndarray,
     labels: np.ndarray,
@@ -54,10 +103,13 @@ def fit_policy(
     stop_cfg: dict,
     n_bins: int = 10,
     gap_s: float = 1.0,
+    floor: dict | None = None,
 ) -> dict:
     """Fit temperature (pooled over window lengths) then theta for dynamic stopping.
 
-    scores_by_len [n_trials, n_lens, n_targets]. Returns T, theta, ECE before/after and the theta table.
+    scores_by_len [n_trials, n_lens, n_targets]. With `floor`, theta is fitted for the gated policy
+    (commit only where the winning score clears the floor). Returns T, theta, ECE before/after and the
+    theta table.
     """
     from neurohack.decoders.stopping import fit_theta
 
@@ -75,6 +127,7 @@ def fit_policy(
         n_tg,
         gap_s,
         stop_cfg["on_timeout"],
+        allowed=floor_mask(scores_by_len, lengths, floor) if floor else None,
     )
     return {
         "temperature": t,

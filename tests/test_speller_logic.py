@@ -14,7 +14,9 @@ from logic import (  # noqa: E402
     SPACE,
     UNDO,
     Speller,
+    acceptable_targets,
     label_for,
+    label_lines,
     sentence_metrics,
     split4,
 )
@@ -104,3 +106,81 @@ def test_metrics():
     assert m["wpm"] == pytest.approx(3.0)
     assert m["p_est"] == pytest.approx(0.9)
     assert m["itr_bits_min"] > 0
+
+
+def _follow(sp: Speller, goal: str, max_steps: int = 200) -> int:
+    """Always pick the smallest acceptable target; return the number of selections to 'send'."""
+    for n in range(1, max_steps):
+        ok = acceptable_targets(sp, goal)
+        assert ok, (sp.view, sp.text, sp.targets())
+        sp.select(min(ok))
+        if sp.sent_text is not None:
+            return n
+    raise AssertionError("did not finish")
+
+
+def test_copy_spelling_baseline_reaches_goal():
+    sp = Speller("baseline", LETTERS)
+    _follow(sp, "hi you")
+    assert sp.sent_text == "hi you"
+
+
+def test_copy_spelling_requires_undo_after_error():
+    sp = Speller("baseline", LETTERS)
+    sp.select(find(sp, "x")[-1])  # find() applies the narrowing steps itself
+    assert sp.text == "x"
+    ok = acceptable_targets(sp, "hi")
+    assert all(UNDO in sp.targets()[j] for j in ok)
+    _follow(sp, "hi")
+    assert sp.sent_text == "hi"
+
+
+def test_copy_spelling_narrowed_group_without_letter_needs_cancel():
+    sp = Speller("baseline", LETTERS)
+    sp.select(0)  # a-h group
+    sp.select(0)  # a, b
+    ok = acceptable_targets(sp, "z")
+    assert [sp.targets()[j] for j in ok] == [[CANCEL]]
+
+
+def test_copy_spelling_llm_suggestions():
+    sp = Speller("llm", LETTERS)
+    sp.set_suggestions(["I am fine", "I am tired", "thirsty"])
+    assert acceptable_targets(sp, "i am fine") == {3}  # case differs -> no exact match -> MORE
+    sp.set_suggestions(["i am fine", "i am tired", "thirsty"])
+    assert acceptable_targets(sp, "i am fine") == {0}
+    sp.select(0)
+    assert sp.text == "i am fine "
+    sp.select(3)  # more -> letters view
+    ok = acceptable_targets(sp, "i am fine")
+    assert all(SEND in sp.targets()[j] for j in ok)
+
+
+def test_metrics_measured_accuracy():
+    m = sentence_metrics(
+        "hi", 0.0, 60.0, n_commits=10, n_undo=0, n_abstain=0, n_timeout=0, n_correct=7
+    )
+    assert m["p_est"] == 0.7 and m["p_source"].startswith("measured")
+    m2 = sentence_metrics("hi", 0.0, 60.0, n_commits=10, n_undo=0, n_abstain=0, n_timeout=0)
+    assert m2["p_est"] == 1.0 and m2["p_source"].startswith("estimated")
+
+
+def test_copy_spelling_wrong_group_without_cancel():
+    sp = Speller("baseline", LETTERS)
+    sp.select(3)  # w..send: 7 items -> 4 sub-groups, no CANCEL
+    assert all(t != [CANCEL] for t in sp.targets())
+    ok = acceptable_targets(sp, "hi")
+    assert ok and all(len(sp.targets()[j]) > 1 for j in ok)
+    assert _follow(sp, "hi") > 0 and sp.sent_text == "hi"
+
+
+def test_label_lines_spell_out_every_letter():
+    lab = {k: k for k in ("space", "undo", "send", "back", "cancel")} | {"more": "more >"}
+    sp = Speller("baseline", LETTERS)
+    top = sp.targets()
+    assert label_lines(top[0], lab, 4) == ["A B C D", "E F G H"]
+    assert label_lines(top[3], lab, 4) == ["W X Y Z", "space", "undo", "send"]
+    assert label_lines(["o"], lab, 4) == ["O"]
+    assert label_lines([CANCEL], lab, 4) == ["cancel"]
+    assert label_lines([""], lab, 4) == []
+    assert label_lines(["I am fine"], lab, 4) == ["I am fine"]  # suggestion: wrapped by the UI

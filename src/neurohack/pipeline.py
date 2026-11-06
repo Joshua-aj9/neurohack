@@ -36,8 +36,11 @@ class OnlinePipeline:
         quality_cfg: dict,
         freqs: list[float],
         buffer_s: float = 60.0,
+        record: bool = False,
     ) -> None:
         self.source = source
+        self.record = record  # keep every raw chunk (for offline diagnosis of live sessions)
+        self._rec: list[tuple[np.ndarray, np.ndarray]] = []
         self.dcfg = decoder_cfg
         self.qcfg = quality_cfg
         self.freqs = list(freqs)
@@ -68,11 +71,28 @@ class OnlinePipeline:
         n = ts.size
         if n:
             self.raw.append(data, ts)
+            if self.record:
+                self._rec.append((data.copy(), ts.copy()))
             eeg = self.filter(data[self.eeg_idx])
             if self.dcfg["preprocessing"].get("car"):
                 eeg = car(eeg)
             self.filt.append(eeg, ts)
         return n
+
+    def save_recording(self, path) -> bool:
+        """Write every pumped raw sample to `path` (.npz, same layout as recorder.Recorder)."""
+        if not self._rec:
+            return False
+        info = self.source.info
+        np.savez_compressed(
+            path,
+            data=np.concatenate([d for d, _ in self._rec], axis=1),
+            timestamps=np.concatenate([t for _, t in self._rec]),
+            srate=info.srate,
+            ch_names=np.array(info.ch_names),
+            ch_types=np.array(info.ch_types),
+        )
+        return True
 
     def latest_time(self) -> float:
         _, ts = self.raw.latest(1)
@@ -106,9 +126,11 @@ class OnlinePipeline:
         w = self.filt.window(onset + self.latency, n)
         return None if w is None else w[0][self.dec_idx]
 
-    def set_calibration(self, temperature: float, theta: float) -> None:
+    def set_calibration(self, temperature: float, theta: float, floor: dict | None = None) -> None:
+        """floor: no-SSVEP floor from calibration (None = no absolute gate, softmax confidence only)."""
         self.decoder.temperature = temperature
         self.policy.theta = theta
+        self.policy.floor = floor
 
     def start_trial(self, onset: float) -> None:
         self.trial = TrialState(onset=onset)
@@ -129,10 +151,16 @@ class OnlinePipeline:
             self.compute_ms.append((time.perf_counter() - t0) * 1e3)
             q = self.quality(t_end=tr.onset + self.latency + L).score_of(self.dcfg["channels"])
             tr.history.append(
-                {"window_s": L, "scores": scores.tolist(), "probs": probs.tolist(), "quality": q}
+                {
+                    "window_s": L,
+                    "scores": scores.tolist(),
+                    "probs": probs.tolist(),
+                    "quality": q,
+                    "floor": self.policy.floor_at(L),
+                }
             )
             tr.next_idx += 1
-            dec = self.policy.step(L, probs, q)
+            dec = self.policy.step(L, probs, q, float(np.max(scores)))
             if dec is not None:
                 self.last_history = tr.history
                 self.trial = None

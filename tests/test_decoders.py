@@ -132,3 +132,45 @@ def test_simulate_and_fit_theta():
         probs, labels, lengths, 0.95, (0.5, 0.95, 0.05), 2, min_commit_rate=0.3
     )
     assert theta == pytest.approx(0.65)
+
+
+# ---- no-SSVEP floor (LIVE 6 Nov: speller committed on noise, see GATES.md G6) ----------------------
+def test_fit_null_floor_recovers_power_law():
+    from neurohack.decoders.calibration import fit_null_floor, null_floor_at
+
+    rng = np.random.default_rng(0)
+    # winning noise score ~ 0.8 / L: the 95th percentile follows the same law
+    rest = {L: 0.8 / L * rng.uniform(0.5, 1.0, 5000) for L in (1.0, 1.25, 1.5)}
+    fl = fit_null_floor(rest, 0.95, 20)
+    assert fl["exponent"] == pytest.approx(-1.0, abs=0.05)
+    assert null_floor_at(fl, 4.0) == pytest.approx(0.8 / 4 * 0.975, rel=0.05)
+    assert null_floor_at(None, 1.0) == 0.0
+
+
+def test_fit_null_floor_single_length_and_too_few():
+    from neurohack.decoders.calibration import fit_null_floor, null_floor_at
+
+    fl = fit_null_floor({1.0: np.full(30, 0.6), 1.5: np.full(5, 0.1)}, 0.95, 20)  # 1.5 s skipped
+    assert fl["exponent"] == -1.0 and null_floor_at(fl, 2.0) == pytest.approx(0.3)
+    with pytest.raises(ValueError):
+        fit_null_floor({1.0: np.full(5, 0.6)}, 0.95, 20)
+
+
+def test_policy_does_not_commit_below_floor():
+    floor = {"coef": 0.8, "exponent": -1.0}
+    pol = StoppingPolicy(theta=0.9, min_window_s=1.0, step_s=0.5, max_window_s=2.0, floor=floor)
+    sure = np.array([0.97, 0.01, 0.01, 0.01])
+    assert (
+        pol.step(1.0, sure, 1.0, score_max=0.5) is None
+    )  # confident softmax, but noise-level score
+    d = pol.step(1.0, sure, 1.0, score_max=0.85)
+    assert d.kind == COMMIT and d.target == 0
+    assert pol.step(2.0, sure, 1.0, score_max=0.3).kind == TIMEOUT  # floor(2 s) = 0.4
+    assert StoppingPolicy(theta=0.9).step(1.0, sure, 1.0, score_max=0.0).kind == COMMIT  # no floor
+
+
+def test_simulate_respects_allowed_mask():
+    probs = np.array([[[0.9, 0.1], [0.95, 0.05]]])
+    allowed = np.array([[False, True]])
+    pred, t = simulate(probs, np.array([0]), 0.85, [1.0, 2.0], allowed=allowed)
+    assert pred.tolist() == [0] and t.tolist() == [2.0]

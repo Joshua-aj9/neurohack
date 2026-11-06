@@ -40,6 +40,14 @@ stopping:
 calibration:
   temperature: 1.0            # overwritten by fit_temperature
   ece_bins: 10
+  null_floor:                 # no-SSVEP gate: commit only if the winning raw score >= floor(window).
+                              # LIVE 6 Nov: with NO flicker, p_max >= theta in 48% of 1 s windows (G3
+                              # rest) and the speller committed on noise (copy accuracy 0.47).
+    enabled: true
+    quantile: 0.95            # floor = this quantile of the winning score on no-flicker windows
+    offset_s: 0.3             # rest windows start this long after trial_end (SSVEP decay)
+    lengths: [1.0, 1.25, 1.5] # window lengths fitted; G3 rest+cue gives ~1.8 s of static screen
+    min_windows: 20           # skip a length with fewer rest windows than this
 
 analysis:                     # G3 offline analysis (scripts/analyze_session.py)
   snr_half_bw_hz: 1.0         # neighbourhood for PSD SNR at each stimulus frequency

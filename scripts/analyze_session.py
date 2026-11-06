@@ -20,7 +20,14 @@ from scipy import signal
 
 from neurohack.config import REPO_ROOT, frange, load_config
 from neurohack.decoders.base import softmax
-from neurohack.decoders.calibration import ece, fit_policy, reliability
+from neurohack.decoders.calibration import (
+    ece,
+    fit_null_floor,
+    fit_policy,
+    floor_mask,
+    null_floor_at,
+    reliability,
+)
 from neurohack.decoders.cca import CCADecoder
 from neurohack.decoders.fbcca import FBCCADecoder
 from neurohack.decoders.stopping import simulate, summarize
@@ -85,6 +92,35 @@ def epochs(
             X.append(filt[:, i0 : i0 + n])
             y.append(int(d["target"]))
     return np.asarray(X), np.asarray(y), freqs, filt
+
+
+def rest_windows(
+    sess: dict, filt: np.ndarray, lengths: list[float], offset_s: float, latency_s: float
+) -> dict[float, np.ndarray]:
+    """No-flicker windows [n, n_eeg, len] per length: from trial_end + offset_s until the next
+    trial_start + latency_s (rest + cue: targets static grey), start every 0.25 s."""
+    data, ts, fs = sess["data"], sess["ts"], sess["srate"]
+    if "counter" in sess["ch_types"]:
+        ts = dejitter(ts, data[sess["ch_types"].index("counter")], fs)
+    ev = [(m["t"], decode(m["value"]).get("event")) for m in sess["markers"]]
+    gaps = []
+    for k, (t, e) in enumerate(ev):
+        if e != "trial_end":
+            continue
+        nxt = next((t2 for t2, e2 in ev[k + 1 :] if e2 == "trial_start"), None)
+        stop = ts[-1] if nxt is None else nxt + latency_s
+        gaps.append((t + offset_s, stop))
+    out = {}
+    for L in lengths:
+        n = int(round(L * fs))
+        w = []
+        for a, b in gaps:
+            for t0 in np.arange(a, b - L + 1e-9, 0.25):
+                i0 = int(np.searchsorted(ts, t0))
+                if i0 + n <= filt.shape[1]:
+                    w.append(filt[:, i0 : i0 + n])
+        out[float(L)] = np.asarray(w)
+    return out
 
 
 def snr_at(
@@ -154,6 +190,14 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
     stop_lengths = frange(
         dc["stopping"]["min_window_s"], dc["stopping"]["max_window_s"], dc["stopping"]["step_s"]
     )
+    nf = dc.get("calibration", {}).get("null_floor") or load_config("decoder")["calibration"].get(
+        "null_floor"
+    )
+    rest = (
+        rest_windows(sess, filt_all, nf["lengths"], nf["offset_s"], lat)
+        if nf and nf.get("enabled")
+        else {}
+    )
     curves, best = {}, None
     for name, chans in sets.items():
         idx = [eeg_names.index(c) for c in chans]
@@ -167,26 +211,52 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
         le3 = [i for i, L in enumerate(CURVE) if L <= an["pass_max_window_s"]]
         k3 = le3[int(np.argmax(af[le3]))]
         s_stop = scores_by_length(fb, Xc, stop_lengths, fs)
+        floor, rest_sc = None, {}
+        if rest:
+            rest_sc = {
+                L: np.array([fb.scores(w[idx]) for w in ws]) for L, ws in rest.items() if len(ws)
+            }
+            try:
+                floor = fit_null_floor(
+                    {L: v.max(axis=1) for L, v in rest_sc.items()},
+                    nf["quantile"],
+                    nf["min_windows"],
+                )
+            except ValueError:
+                print(f"  {name}: not enough no-flicker windows -> no floor")
         # held-out estimate (2-fold) + final fit on all trials
         rng = np.random.default_rng(0)
         perm = rng.permutation(len(y))
         halves = [perm[: len(y) // 2], perm[len(y) // 2 :]]
         preds, times, ys = [], [], []
         for a, b in [(0, 1), (1, 0)]:
-            fit = fit_policy(s_stop[halves[a]], y[halves[a]], stop_lengths, dc["stopping"])
+            fit = fit_policy(
+                s_stop[halves[a]], y[halves[a]], stop_lengths, dc["stopping"], floor=floor
+            )
             pr, tt = simulate(
                 softmax(s_stop[halves[b]] / fit["temperature"]),
                 y[halves[b]],
                 fit["theta"],
                 stop_lengths,
                 dc["stopping"]["on_timeout"],
+                allowed=floor_mask(s_stop[halves[b]], stop_lengths, floor) if floor else None,
             )
             preds.append(pr)
             times.append(tt)
             ys.append(y[halves[b]])
         pred, tdec, yy = np.concatenate(preds), np.concatenate(times), np.concatenate(ys)
         heldout = summarize(pred, tdec, yy, n_tg, gap_s=1.0)
-        final = fit_policy(s_stop, y, stop_lengths, dc["stopping"])
+        final = fit_policy(s_stop, y, stop_lengths, dc["stopping"], floor=floor)
+        # per-window commit rate of the final policy on no-flicker windows (what a glance away costs)
+        rest_commit = {
+            str(L): float(
+                np.mean(
+                    (softmax(v / final["temperature"]).max(axis=1) >= final["theta"])
+                    & (v.max(axis=1) >= null_floor_at(floor, L))
+                )
+            )
+            for L, v in rest_sc.items()
+        }
         k2 = CURVE.index(2.0)
         row = {
             "channels": chans,
@@ -200,6 +270,8 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
             "acc_fbcca_2s": float(af[k2]),
             "dynamic_stopping_heldout": heldout,
             "final_fit": {k: v for k, v in final.items() if k != "theta_table"},
+            "null_floor": floor,
+            "rest_window_commit_rate": rest_commit,
             "confusion_heldout": confusion(pred, yy, n_tg).tolist(),
         }
         qfrac = quality_pass_frac(
@@ -219,8 +291,8 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
         # let through (LIVE 6 Nov: unwetted Pz won on ITR but its quality gate passed 0% of windows)
         key = (row["eligible"], heldout["itr_bits_min"], float(af[k2]))
         if best is None or key > best[0]:
-            best = (key, name, final, s_stop, pred, yy)
-    _, best_name, best_fit, s_stop, pred, yy = best
+            best = (key, name, final, s_stop, pred, yy, floor)
+    _, best_name, best_fit, s_stop, pred, yy, best_floor = best
     out["selected_channel_set"] = best_name
     if not out["channel_sets"][best_name]["eligible"]:
         print(
@@ -237,6 +309,7 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
         "theta": best_fit["theta"],
         "ece_before": best_fit["ece_before"],
         "ece_after": best_fit["ece_after"],
+        "null_floor": best_floor,
     }
     out["calibration"] = calib
 
@@ -312,6 +385,12 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
             f" | quality gate passes {r['quality_pass_frac']:.0%}"
             + ("" if r["eligible"] else " -> NOT ELIGIBLE")
         )
+        if r["null_floor"]:
+            fl = r["null_floor"]
+            print(
+                f"    no-SSVEP floor {fl['coef']:.3f}*L^{fl['exponent']:.2f}; commits on no-flicker "
+                f"windows: { {k: f'{v:.0%}' for k, v in r['rest_window_commit_rate'].items()} }"
+            )
     print(f"  Oz SNR at stim freqs: { {k: round(v, 2) for k, v in snrs.items()} }")
     print(
         f"  selected: {best_name}  T={calib['temperature']:.4f} theta={calib['theta']:.3f} "

@@ -28,6 +28,20 @@ class QualityReport:
         idx = [self.ch_names.index(n) for n in names if n in self.ch_names]
         return float(self.scores[idx].min()) if idx else 0.0
 
+    def reasons_for(self, names: list[str]) -> list[str]:
+        """Reasons that concern `names` (e.g. the decoder channels), channel lists trimmed to them.
+        Unused electrodes (LIVE 6 Nov: unwetted Fz..Pz) otherwise dominate the messages."""
+        out = []
+        for r in self.reasons:
+            who, what = r.split(": ", 1)
+            if who == "all":
+                out.append(r)
+                continue
+            mine = [c for c in who.split(", ") if c in names]
+            if mine:
+                out.append(f"{', '.join(mine)}: {what}")
+        return out
+
     def as_dict(self) -> dict:
         return {
             "scores": dict(zip(self.ch_names, np.round(self.scores, 3).tolist(), strict=True)),

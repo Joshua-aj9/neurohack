@@ -19,7 +19,11 @@ frequency_sets:
   # harmonic of another (6.5->13, 7.5->15, 13.5->27, 16.5->33). NOTE: fundamentals below 8 Hz need
   # decoder.fbcca.subband_low_start_hz <= 6 (decoder validates this).
   non_alpha: [6.5, 7.5, 13.5, 16.5]
-active_set: default
+  # Above alpha (Joshua). LIVE 6 Nov, acc @1.5 s at 22:02: 8.57 Hz 0.80, 10 Hz 0.40, 12 Hz 0.90, 15 Hz 0.90;
+  # Oz SNR 3.2 / 2.7 / 11.2 / 19.6. Keeps his two strongest; 1.5 Hz spacing; 165/16.5 = 10 frames.
+  # Harmonics 24/27/30/33 Hz do not collide. Order = top, right, bottom, left.
+  high: [12.0, 13.5, 15.0, 16.5]
+active_set: high              # was default (8.57/10/12/15) until Fri 6 Nov 22:30; needs a new calibration
 phases_pi: [0.0, 0.5, 1.0, 1.5]   # phase offsets in units of pi, per target
 
 layout:

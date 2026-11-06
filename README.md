@@ -44,7 +44,7 @@ All of the following was written on **Thu 5 Nov 2026 (evening)**, before the hac
 - `decoders/`
   - `cca.py`: CCA.
   - `fbcca.py`: FBCCA.
-  - `calibration.py`: temperature scaling and ECE.
+  - `calibration.py`: temperature scaling, ECE, and the no-SSVEP score floor.
   - `stopping.py`: confidence-gated dynamic stopping with quality abstention, and θ fitting.
 - `pipeline.py`: the online Source → filter → quality + decoder → stopping chain.
 - `worker.py`: runs the decoder in a background thread.
@@ -92,7 +92,17 @@ gains a `contact_check` section. Tests are in `tests/test_contact.py`. `preproce
 gains an optional Butterworth band-stop. The decoder now uses 47–53 Hz instead of the 50 Hz notch, chosen
 from Joshua's LIVE dry recording (see GATES.md). `quality.assess` takes an optional `filtered` window: flatline,
 railing and EMG are scored on the decoder-filtered signal, and mains becomes an absolute-µV contact check on the
-raw signal (thresholds from the dry and saline LIVE recordings).
+raw signal (thresholds from the dry and saline LIVE recordings). The speller gained `--copy` (copy-spelling with
+measured per-selection accuracy, `logic.acceptable_targets`), a 1 s static gap before every flicker, decoder-channel-only
+quality messages, and raw EEG recording (`OnlinePipeline(record=True)`). G3 channel selection excludes sets that fail
+the quality gate.
+
+**Added Fri 6 Nov (evening, still before the event):** no-SSVEP floor. `decoders/calibration.py` fits an absolute
+floor on the winning decoder score from the calibration's no-flicker windows (`fit_null_floor`), and
+`StoppingPolicy` only commits above it. `scripts/analyze_session.py` fits it (`rest_windows`) and writes it to
+`user_calibration.json`. The speller gained `--cue` (with `--copy`: G3-style red frame on the target to look at)
+as a diagnostic. The active frequency set is now 12/13.5/15/16.5 Hz (`stim.yaml` `high`, above Joshua's alpha
+band), and the speller draws every letter of a group inside its square (`logic.label_lines`).
 
 Pre-event results (all SYNTHETIC or PUBLIC DATASET; none are LIVE) are in `GATES.md`, `results/` and `figures/`.
 

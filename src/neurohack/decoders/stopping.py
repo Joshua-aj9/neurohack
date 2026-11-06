@@ -33,6 +33,8 @@ class StoppingPolicy:
     max_window_s: float = 4.0
     quality_min: float = 0.5
     on_timeout: str = "abstain"
+    # no-SSVEP floor on the winning raw score (calibration.fit_null_floor)
+    floor: dict | None = None
 
     @classmethod
     def from_config(cls, stop_cfg: dict) -> StoppingPolicy:
@@ -49,12 +51,23 @@ class StoppingPolicy:
     def lengths(self) -> list[float]:
         return frange(self.min_window_s, self.max_window_s, self.step_s)
 
-    def step(self, window_s: float, probs: np.ndarray, quality: float) -> Decision | None:
-        """Return a Decision to end the trial, or None to keep growing the window."""
+    def floor_at(self, window_s: float) -> float:
+        from neurohack.decoders.calibration import null_floor_at
+
+        return null_floor_at(self.floor, window_s)
+
+    def step(
+        self, window_s: float, probs: np.ndarray, quality: float, score_max: float | None = None
+    ) -> Decision | None:
+        """Return a Decision to end the trial, or None to keep growing the window.
+
+        score_max (winning raw decoder score) is checked against the floor: below it, no commit
+        however confident the softmax is (there may be no SSVEP at all)."""
         j, p = int(np.argmax(probs)), float(np.max(probs))
         if quality < self.quality_min:
             return Decision(ABSTAIN_QUALITY, None, p, window_s, quality)
-        if p >= self.theta:
+        above = score_max is None or self.floor is None or score_max >= self.floor_at(window_s)
+        if p >= self.theta and above:
             return Decision(COMMIT, j, p, window_s, quality)
         if window_s >= self.max_window_s - 1e-9:
             target = j if self.on_timeout == "argmax" else None
@@ -68,14 +81,17 @@ def simulate(
     theta: float,
     lengths: list[float],
     on_timeout: str = "abstain",
+    allowed: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """probs_by_len [n_trials, n_lens, n_targets] -> (pred [-1 = no selection], decision time s)."""
+    """probs_by_len [n_trials, n_lens, n_targets] -> (pred [-1 = no selection], decision time s).
+    allowed [n_trials, n_lens]: windows where a commit is permitted (e.g. calibration.floor_mask)."""
     n = probs_by_len.shape[0]
     pred = np.full(n, -1)
     tdec = np.full(n, lengths[-1])
     pmax = probs_by_len.max(axis=2)
+    ok = pmax >= theta if allowed is None else (pmax >= theta) & allowed
     for i in range(n):
-        hit = np.nonzero(pmax[i] >= theta)[0]
+        hit = np.nonzero(ok[i])[0]
         if hit.size:
             pred[i] = int(np.argmax(probs_by_len[i, hit[0]]))
             tdec[i] = lengths[hit[0]]
@@ -114,6 +130,7 @@ def fit_theta(
     gap_s: float = 1.0,
     on_timeout: str = "abstain",
     min_commit_rate: float = 0.2,
+    allowed: np.ndarray | None = None,
 ) -> tuple[float, list[dict]]:
     """Smallest theta whose committed accuracy >= target (fastest such policy).
 
@@ -122,7 +139,7 @@ def fit_theta(
     """
     table = []
     for th in frange(*grid):
-        pred, tdec = simulate(probs_by_len, labels, th, lengths, on_timeout)
+        pred, tdec = simulate(probs_by_len, labels, th, lengths, on_timeout, allowed)
         row = {"theta": th, **summarize(pred, tdec, labels, n_targets, gap_s)}
         table.append(row)
     ok = [

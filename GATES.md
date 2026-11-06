@@ -11,7 +11,7 @@ Labels: **SYNTHETIC** | **PUBLIC DATASET** | **LIVE (Joshua)**. Only measured nu
 | G5 LLM | **PASS with caveat**: latency PASS with Wi-Fi off; the only strict 20/20+ JSON run had Wi-Fi on | LIVE | Fri 6 Nov 00:54 |
 | Contact check (pre-G3) | dry and saline: **EEG visible** on PO7/Oz/PO8. Saline cut occipital mains ~30–50× (≈500 → 11–17 µV), alpha ratio 4.6–6.4. Decoder now uses a 47–53 Hz band-stop; quality monitor now scores the filtered signal + mains as contact (saline: 89% of windows pass) | LIVE | Fri 6 Nov 17:40 |
 | G3 Live SSVEP | **PASS**: PO7/Oz/PO8 FBCCA 0.97 @ 2 s, 1.00 @ 2.5 s (40 trials); held-out dyn. stopping acc 0.95, ITR 38.7 bits/min | LIVE (saline) | Fri 6 Nov 18:03 |
-| G6 Full loop | BUILT, synthetic/headless-tested; G3 done -> WAITING FOR JOSHUA — `apps/speller/main.py` | LIVE | — |
+| G6 Full loop | LIVE 22:07 CUED copy: "hi there" typed, 30/32 correct (0.94), ITR 15.6; 22:10 uncued: 30/50 (0.60), ITR 4.1 → search/gaze + weak 10 Hz target; new 12–16.5 Hz set + letters inside squares; recalibration + reruns WAITING FOR JOSHUA | LIVE | Fri 6 Nov 22:45 |
 | CL Closed-loop template | **PASS** synthetic part (4/4 runs); live eyes-closed test WAITING FOR JOSHUA | SYNTHETIC | Thu 5 Nov |
 | G7 ErrP (stretch) | not started (only after G6 passes) | — | — |
 
@@ -41,7 +41,13 @@ warns if you calibrated under a different condition. G0 does not need it (plumbi
    uv run python apps/ssvep_calibrate.py --electrodes saline   # or gel / dry
    ```
    Analysis runs automatically. It writes `results/user_calibration.json`, which the speller needs.
-5. **G6** (after G3 passes). Type the same 5-word reply in both modes, then do a 10-minute run with one deliberate jaw clench:
+5. **G6** (after G3 passes). First a copy-spelling run, which MEASURES accuracy per selection (use undo to fix errors):
+   ```powershell
+   uv run python apps/speller/main.py --mode baseline --once --copy "hi there" --cue --electrodes saline
+   uv run python apps/speller/main.py --mode baseline --once --copy "hi there" --electrodes saline
+   ```
+   `--cue` draws the G3 red frame on the target to look at: cued vs uncued accuracy separates "no SSVEP in
+   the speller" from "gaze/search in the speller UI". Then type the same 5-word reply in both modes, then a 10-minute run with one deliberate jaw clench:
    ```powershell
    uv run python apps/speller/main.py --mode baseline --once --electrodes saline
    uv run python apps/speller/main.py --mode llm --once --electrodes saline
@@ -53,6 +59,102 @@ warns if you calibrated under a different condition. G0 does not need it (plumbi
    ```
 
 ---
+
+```
+G6 — first LIVE attempts, diagnosis   [LIVE (Joshua), baseline mode, saline, Fri 6 Nov 18:18 + 18:23]
+Evidence: sessions/20261106_181832_speller_baseline_joshua_saline, ..._182325_... (events.jsonl; no raw EEG)
+  run 1 (4.4 min): 115 decisions = 42 commits + 73 quality abstentions (63%); text "taaabaggoog"
+  run 2 (1.0 min): 28 decisions = 8 commits + 20 quality abstentions (71%)
+  commits: 32/42 at the minimum 1.0 s window; p_max median 0.98
+  the logged "p_est 1.0, ITR 19.0 bits/min" is NOT a measurement: p was estimated from undo presses
+    and none were made -> sentence_metrics now labels the source; --copy measures it instead
+  abstention causes on PO7/Oz/PO8 (logged reasons): EMG flag (PO8 46x, Oz 25x, PO7 20x of 73);
+    the on-screen message showed the first two reasons, which were 50 Hz on the UNWETTED Fz..Pz
+    (not decoder channels) -> looked like contact problems
+  checked against the G3 recording (same electrodes, 20 min earlier):
+    EMG metric is NOT raised by the flicker (gate passes 91% during flicker, 82% at rest; stimulus
+      harmonics carry 13-19% of 20-45 Hz power) and NOT by the gaze shift (88% at cue onset)
+    -> cause of the speller's EMG flags unknown (tension? saline drying?); speller now saves raw EEG
+  gaze timing (G3 data, windows shifted to start before flicker onset, calibrated T/theta):
+    gaze on time 0.95 committed acc; 0.25 s late 0.85; 0.5 s late 0.68; 0.75 s late 0.56
+    the speller started the flicker right after the 0.6 s feedback (new labels) or abstain message,
+    with no settle time (the 0.5 s gap only ran after LLM fetches)
+Fixes (85 tests pass; SYNTHETIC headless copy run "hi": 14 selections, measured acc 0.93, raw EEG saved):
+  - 1.0 s static gap before EVERY flicker (G3 used a 1 s cue)
+  - quality box + abstain message show only the decoder channels
+  - speller saves eeg.npz + trial_start events (onset, expected target) for offline analysis
+  - --copy "<phrase>": every selection scored against the phrase -> measured accuracy and ITR
+Next: Joshua reruns with --copy (re-wet first); analyse the recorded EEG for the EMG flags.
+```
+
+```
+G6 — recalibration + cued vs uncued copy runs   [LIVE (Joshua), baseline, saline, Fri 6 Nov 22:02-22:15]
+Evidence: sessions/20261106_220235_ssvep_calibrate_..., ..._220719_speller_... (cued), ..._221055_... (uncued)
+  recalibration 22:02 (40 trials): G3 PASS but weaker than 17:58: FBCCA 1 s 0.57 (was 0.80),
+    1.5 s 0.75 (0.97), 2 s 0.88 (0.97), 2.5 s 0.98; held-out with floor: acc 0.97, commit 0.85,
+    mean 2.26 s, ITR 27.5 bits/min; floor 0.743 * L^-0.84; theta 0.65
+  NOTE the cued run started 8 s before the 22:02 analysis wrote user_calibration.json -> it used the
+    17:58 calibration (+ floor); the uncued run used the 22:02 one. Compared below with ONE decoder:
+                          online measured acc   intended-target acc (replay) 1 s / 2 s   SNR @1 s
+    22:02 calibration     -                     0.57 / 0.88                              1.20
+    22:07 CUED            30/32 = 0.94          0.57 / 0.71                              1.19
+    22:10 uncued          30/50 = 0.60          0.29 / 0.46                              1.07
+    (21:07 uncued         8/17 = 0.47           0.23 / 0.00                              1.03)
+  -> with the cue the speller EEG matches the calibration; without it the intended target's response
+     halves at the same headset state (1 s RMS PO7/Oz/PO8 8.5/8.2/7.7 vs 8.0/7.9/7.4 uV):
+     finding the target (search / where the eyes are) costs the most, not the screen itself
+  the floor works: cued run 1 s accuracy only 0.57, but commits waited (median 2.0 s) -> 0.94
+  per target, acc @1.5 s (22:02 calibration): top 8.57 Hz 0.80, RIGHT 10 Hz 0.40, bottom 12 Hz 0.90,
+    left 15 Hz 0.90; Oz SNR (4 s) 3.2 / 2.7 / 11.2 / 19.6. 17:58: right also weakest (0.90; 1 s 5/10).
+    Cued run: right 0.35 (n=17). Matches Joshua's report "right struggles more". Both alpha-band
+    frequencies are weakest, and with no flicker the decoder prefers 8.57 Hz (see 21:07 block).
+Changes (Fri 6 Nov 22:45; 91 tests pass; SYNTHETIC headless cued copy "hi": 8 selections, acc 1.00):
+  - stim.yaml active_set: high = 12 / 13.5 / 15 / 16.5 Hz (was 8.57/10/12/15). 13.5 and 16.5 Hz are
+    UNTESTED LIVE; the speller refuses the old calibration (freqs differ) -> recalibrate first
+  - every letter of a group is drawn INSIDE its square, outlined (readable at every flicker level),
+    e.g. "A B C D / E F G H" instead of "A-H" below the square (logic.label_lines)
+Next: recalibrate (new set), then cued and uncued copy runs.
+Recalibration on the new set   [LIVE (Joshua), saline, Fri 6 Nov 22:50; sessions/20261106_225009_...]
+  G3 PASS, 40 trials: FBCCA 1 s 0.80, 1.25 s 0.90, 2 s 0.95, 3 s 1.00 (22:02 old set: 0.57 / 0.62 / 0.88)
+  per target @1.5 s: 12 Hz 1.00, 13.5 Hz (right) 0.80, 15 Hz 0.90, 16.5 Hz 0.90 (22:02: 10 Hz 0.40)
+  Oz SNR (4 s): 9.4 / 5.6 / 8.6 / 8.4 (22:02 old set 3.2 / 2.7 / 11.2 / 19.6)
+  held-out with floor: acc 0.95, commit 0.95, mean 1.69 s, ITR 34.3 bits/min; T 0.037, theta 0.87,
+    floor 0.720 * L^-1.16 (4-5% commits on no-flicker windows); written to results/user_calibration.json
+  quality gate passed only 60% of 1 s windows (22:02: 99%) -> expect abstentions until re-wetted
+  not a controlled comparison (different time / wetting); speller runs on the new set not done yet
+  the 22:45 attempt (sessions/20261106_224510_...) recorded 0 EEG samples during 40 trials: the
+    calibration app ran without data and did not warn
+```
+
+```
+G6 — second LIVE attempt (copy-spelling), diagnosis   [LIVE (Joshua), baseline, saline, Fri 6 Nov 21:07]
+Evidence: sessions/20261106_210751_speller_baseline_joshua_saline (events.jsonl + eeg.npz, local only)
+  online: 17 commits, 8 correct (measured 0.47), 9 quality abstentions, 3 timeouts, ITR 1.5 bits/min;
+    8/17 commits = top (8.57 Hz); 5/7 commits meant for left went to top
+  offline replay (same FBCCA, PO7/Oz/PO8): reproduces every online score exactly (|d score| < 1e-3);
+    raw vs counter-dejittered timestamps differ by -0.5 ms median (G3: -0.4 ms) -> timing is NOT the cause
+  intended-target accuracy (22 trials with one intended target), replay vs G3 (40 cued trials):
+    1 s 0.23 vs 0.80 | 1.5 s 0.22 (n=9) vs 0.97 | 2 s 0.00 (n=6) vs 0.97   (chance 0.25)
+  SSVEP SNR at the intended frequency, 1 s windows: G3 1.08-1.32 (diagonal), speller 0.88-1.11 (none);
+    in >= 2.5 s trials the winning target changes every 0.5 s -> no steady response, not one neighbour
+  NO-FLICKER windows (G3 rest+cue, speller feedback+gap): FBCCA picks top 58-68% of the time and
+    p_max >= theta (0.885) in 48% (G3) / 32% (speller) of 1 s windows -> the speller commits on noise;
+    softmax confidence is relative, calibration had never seen a no-SSVEP window
+  20-40 Hz RMS on PO7/Oz/PO8 during flicker: speller 5.5/5.6/4.6 uV vs G3 4.0/4.0/4.5 (3 h later)
+  why the SSVEP was missing is NOT determined (gaze on labels outside the squares / search / centre
+    text, or headset state 3 h after G3) -> --cue rerun + fresh calibration separate the two
+Fixes (90 tests pass; SYNTHETIC headless cued copy "hi": 14 selections, measured acc 0.86):
+  - no-SSVEP floor: commit only if the winning raw FBCCA score >= floor(L) = c * L^b, fitted on the
+    calibration's no-flicker windows (95th percentile, decoder.yaml calibration.null_floor;
+    calibration.fit_null_floor, StoppingPolicy.floor); theta is refitted for the gated policy
+    G3 re-analysed with the floor (same 40 trials): floor 0.804 * L^-0.87; held-out committed acc 1.00
+      (was 0.95), commit rate 0.97, mean 1.57 s (was 1.39), ITR 45.4 bits/min (was 38.7); theta 0.300;
+      final policy commits on 5% / 4% / 6% of no-flicker windows at 1 / 1.25 / 1.5 s (was 48% at 1 s)
+    replay of the 21:07 run with the new calibration: 3 commits (2 correct) instead of 13 (4 correct);
+      the other 19 trials keep waiting (flicker had already stopped, so their outcome is unknown)
+  - --cue (with --copy): red frame on the target to look at, drawn like the G3 cue
+Next: re-wet, recalibrate (G3 protocol), then cued and uncued copy runs.
+```
 
 ```
 GATE G3 — PASS   [LIVE (Joshua), saline on PO7/Oz/PO8, Fri 6 Nov 17:58]

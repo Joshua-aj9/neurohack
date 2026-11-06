@@ -35,3 +35,29 @@ def test_unwetted_channel_makes_set_ineligible(synth, cfgs):
     )
     frac_min = cfgs["decoder"]["analysis"]["min_quality_pass_frac"]
     assert good >= frac_min and bad == 0.0
+
+
+def test_rest_windows_cover_static_gaps_only():
+    """No-flicker windows run from trial_end + offset to the next trial_start + latency."""
+    fs, n = 250.0, 250 * 20
+    ts = np.arange(n) / fs
+    sess = {
+        "data": np.zeros((2, n)),
+        "ts": ts,
+        "srate": fs,
+        "ch_types": ["eeg", "eeg"],
+        "markers": [
+            {"t": 1.0, "value": '{"event": "trial_start"}'},
+            {"t": 5.0, "value": '{"event": "trial_end"}'},
+            {"t": 7.0, "value": '{"event": "trial_start"}'},
+            {"t": 11.0, "value": '{"event": "trial_end"}'},
+        ],
+    }
+    filt = np.vstack([ts, ts])  # value = time, so each window reveals where it starts
+    out = analyze_session.rest_windows(sess, filt, [1.0, 1.5], offset_s=0.3, latency_s=0.14)
+    w1 = out[1.0]
+    starts = w1[:, 0, 0]
+    # gap 1: 5.3 .. 7.14 -> starts 5.3, 5.55, 5.8, 6.05 (6.3 + 1 > 7.14); gap 2: 11.3 .. end of data
+    assert np.allclose(starts[:4], [5.3, 5.55, 5.8, 6.05], atol=1 / fs)
+    assert all(s >= 11.3 - 1 / fs for s in starts[4:])
+    assert w1.shape[1:] == (2, 250) and out[1.5].shape[2] == 375

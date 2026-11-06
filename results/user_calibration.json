@@ -1,20 +1,35 @@
 {
   "label": "LIVE",
   "electrodes": "saline",
-  "session": "20261106_175818_ssvep_calibrate_default_joshua_saline",
+  "session": "20261106_225009_ssvep_calibrate_high_joshua_saline",
   "channels": [
     "PO7",
     "Oz",
     "PO8"
   ],
   "freqs": [
-    8.57,
-    10.0,
     12.0,
-    15.0
+    13.5,
+    15.0,
+    16.5
   ],
-  "temperature": 0.04520620011210193,
-  "theta": 0.885,
-  "ece_before": 0.6492322410068181,
-  "ece_after": 0.023107729400681225
+  "temperature": 0.0369745294035948,
+  "theta": 0.87,
+  "ece_before": 0.6519785373113983,
+  "ece_after": 0.014731656726177423,
+  "null_floor": {
+    "coef": 0.7197945747169223,
+    "exponent": -1.1635315369351056,
+    "quantile": 0.95,
+    "per_length": {
+      "1.0": 0.7167234624491579,
+      "1.25": 0.5605061468156631,
+      "1.5": 0.44673308332513184
+    },
+    "n_windows": {
+      "1.0": 176,
+      "1.25": 136,
+      "1.5": 96
+    }
+  }
 }

@@ -3,6 +3,8 @@
     uv run python apps/speller/main.py --mode llm                       # LIVE (needs G3 calibration)
     uv run python apps/speller/main.py --mode baseline
     uv run python apps/speller/main.py --mode llm --source synthetic    # demo without headset (SYNTHETIC)
+    uv run python apps/speller/main.py --mode baseline --copy "hi"      # copy-spelling: MEASURED accuracy
+    uv run python apps/speller/main.py --mode baseline --copy "hi" --cue   # + red cue on the right target
 
 Synthetic source keys: 1-4 or arrow keys = look at top/right/bottom/left target, 0 = look away,
 C = toggle jaw clench (EMG artifact -> abstention), M = toggle head motion. ESC = quit (saves session).
@@ -21,10 +23,16 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from logic import Speller, label_for, sentence_metrics  # noqa: E402
+from logic import (  # noqa: E402
+    Speller,
+    acceptable_targets,
+    label_for,
+    label_lines,
+    sentence_metrics,
+)
 
 from neurohack.config import REPO_ROOT, load_config  # noqa: E402
-from neurohack.decoders.calibration import fit_policy  # noqa: E402
+from neurohack.decoders.calibration import fit_null_floor, fit_policy  # noqa: E402
 from neurohack.decoders.stopping import ABSTAIN_QUALITY, COMMIT  # noqa: E402
 from neurohack.llm import LLMClient  # noqa: E402
 from neurohack.markers import MarkerOutlet  # noqa: E402
@@ -59,13 +67,28 @@ def synthetic_calibration(cfgs: dict, freqs: list[float], n_per_target: int) -> 
             pipe.pump()
             dec = pipe.update()
         scores.append([h["scores"] for h in pipe.last_history])
-    fit = fit_policy(np.asarray(scores), labels, pipe.lengths, cfgs["decoder"]["stopping"])
+    floor = None
+    nf = cfgs["decoder"]["calibration"].get("null_floor")
+    if nf and nf.get("enabled"):  # no-flicker stretch -> no-SSVEP floor, as for a LIVE calibration
+        src.set_stimulus(None)
+        t0 = src.now()
+        while src.now() < t0 + nf["min_windows"] * 0.25 + max(nf["lengths"]) + 1.0:
+            pipe.pump()
+        rest = {}
+        for L in nf["lengths"]:
+            ws = [pipe.window(t0 + k * 0.25, L) for k in range(nf["min_windows"])]
+            rest[float(L)] = np.array([pipe.decoder.scores(w).max() for w in ws if w is not None])
+        floor = fit_null_floor(rest, nf["quantile"], nf["min_windows"])
+    fit = fit_policy(
+        np.asarray(scores), labels, pipe.lengths, cfgs["decoder"]["stopping"], floor=floor
+    )
     return {
         "label": "SYNTHETIC",
         "channels": cfgs["decoder"]["channels"],
         "freqs": freqs,
         "temperature": fit["temperature"],
         "theta": fit["theta"],
+        "null_floor": floor,
     }
 
 
@@ -119,8 +142,20 @@ class App:
         if not self.synthetic:
             self.src.start()  # resolve now so the pipeline sees the real channel layout
             self.src.start = lambda: None  # worker.start() must not re-open
-        self.pipe = OnlinePipeline(self.src, dcfg, self.cfgs["quality"], self.freqs)
-        self.pipe.set_calibration(calib["temperature"], calib["theta"])
+        self.pipe = OnlinePipeline(self.src, dcfg, self.cfgs["quality"], self.freqs, record=True)
+        if not calib.get("null_floor"):
+            print(
+                "WARNING: calibration has no no-SSVEP floor: the speller will commit on noise. "
+                "Re-run scripts/analyze_session.py on the calibration session."
+            )
+        self.pipe.set_calibration(calib["temperature"], calib["theta"], calib.get("null_floor"))
+        self.dec_channels = list(calib["channels"])
+        self.goal = args.copy.lower().strip() if args.copy else None
+        if self.goal is not None and not set(self.goal) <= set(c["letters"] + " "):
+            raise SystemExit(f"--copy may only contain {c['letters']!r} and spaces")
+        self.cue = bool(args.cue)
+        if self.cue and self.goal is None:
+            raise SystemExit("--cue needs --copy (the cue marks the target that spells the phrase)")
         self.worker = DecoderWorker(self.pipe)
 
         self.speller = Speller(args.mode, c["letters"], c["return_to_suggestions_after_letter"])
@@ -138,12 +173,13 @@ class App:
         self.gaze: int | None = None
         self.stim_flips: list[float] = []
         self.flip_runs: list[list[float]] = []
+        self._label_cache: dict = {}
         self._reset_counters()
 
     # ---------------------------------------------------------------------------------
     def _reset_counters(self) -> None:
         self.t_first: float | None = None
-        self.n = {"commit": 0, "undo": 0, "abstain": 0, "timeout": 0}
+        self.n = {"commit": 0, "undo": 0, "abstain": 0, "timeout": 0, "correct": 0}
 
     @property
     def context(self) -> str:
@@ -231,6 +267,9 @@ class App:
                     phase, t_phase_end = "result", now + tm["result_s"]
                 elif phase == "feedback" and self.speller.needs_suggestions():
                     phase = "fetch"  # request already started at commit time (on_decision)
+                elif phase in ("feedback", "message"):
+                    # static new labels before every flicker, so gaze can settle (see speller.yaml)
+                    phase, t_phase_end, chosen = "gap", now + tm["gap_s"], None
                 else:
                     phase, t0_stim, chosen = "stim", -1.0, None
             elif phase == "result" and now >= t_phase_end:
@@ -252,7 +291,10 @@ class App:
                         phase, t_phase_end = "feedback", now + tm["feedback_s"]
                     else:
                         q = self.worker.quality
-                        reasons = "; ".join(q.reasons[:2]) if q and q.reasons else ""
+                        mine = q.reasons_for(self.dec_channels) if q else []
+                        reasons = "; ".join(mine[:2]) or "low quality on " + "/".join(
+                            self.dec_channels
+                        )
                         msg_text = (
                             f"Not selected - signal quality ({reasons})"
                             if dec.kind == ABSTAIN_QUALITY
@@ -262,6 +304,11 @@ class App:
             # ---- draw --------------------------------------------------------------------
             disp.screen.fill(st["layout"]["background_rgb"])
             targets = self.speller.targets()
+            cue_j = (
+                min(acceptable_targets(self.speller, self.goal))
+                if self.cue and phase in ("gap", "stim")
+                else None
+            )
             for j, (r, f, ph) in enumerate(zip(rects, self.freqs, self.phases, strict=True)):
                 if phase == "stim" and t0_stim >= 0:
                     level = luminance(now - t0_stim, f, ph, st["mode"])
@@ -273,13 +320,17 @@ class App:
                 disp.screen.fill(grey(level), r)
                 if phase == "feedback" and chosen == j:
                     pg.draw.rect(disp.screen, ui["highlight_rgb"], r.inflate(24, 24), width=10)
-                if self.synthetic and self.gaze == j:
-                    pg.draw.circle(disp.screen, (80, 160, 255), r.center, 10)
-                img = f_lab.render(lab, True, ui["text_rgb"])
-                pos = (r.centerx, r.top - 10) if j == 2 else (r.centerx, r.bottom + 10)
-                disp.screen.blit(
-                    img, img.get_rect(midbottom=pos) if j == 2 else img.get_rect(midtop=pos)
+                elif j == cue_j:  # diagnostic cue, drawn exactly like the G3 calibration cue
+                    pg.draw.rect(disp.screen, st["layout"]["cue_rgb"], r.inflate(24, 24), width=8)
+                img = self.label_surface(
+                    pg,
+                    f_lab,
+                    label_lines(targets[j], self.sc["labels"], ui["label_letters_per_line"]),
+                    r.width - 2 * ui["label_pad_px"],
                 )
+                disp.screen.blit(img, img.get_rect(center=r.center))
+                if self.synthetic and self.gaze == j:
+                    pg.draw.circle(disp.screen, (80, 160, 255), r.midbottom, 10)
             self.draw_center(disp, f_text, f_small, phase, msg_text)
             self.draw_quality(disp, f_small)
             t_flip = disp.flip()
@@ -293,6 +344,15 @@ class App:
             if phase == "stim" and t0_stim < 0:
                 t0_stim = t_flip  # first stimulus flip = trial onset
                 self.worker.start_trial(t_flip)
+                self.sess.log(
+                    "trial_start",
+                    t=t_flip,
+                    targets=[label_for(t, self.sc["labels"]) for t in targets],
+                    expected=sorted(acceptable_targets(self.speller, self.goal))
+                    if self.goal is not None
+                    else None,
+                    cued=cue_j,
+                )
                 self.outlet.push(
                     "trial_start",
                     timestamp=t_flip,
@@ -306,11 +366,15 @@ class App:
                     )
         self.worker.stop()
         disp.close()
+        if self.pipe.save_recording(self.sess.dir / "eeg.npz"):
+            print(f"raw EEG saved: {self.sess.dir / 'eeg.npz'}")
         fstats = self.frame_summary(disp.measured_hz)
         print(f"stimulus frames during decoding: {fstats}")
         self.sess.save_results(
             {
                 "mode": self.args.mode,
+                "copy_goal": self.goal,
+                "cued": self.cue,
                 "calibration": self.calib,
                 "sentences": self.results,
                 "stim_frame_stats": fstats,
@@ -351,6 +415,10 @@ class App:
         }
         if dec.kind == COMMIT:
             self.n["commit"] += 1
+            if self.goal is not None:
+                ok = acceptable_targets(self.speller, self.goal)
+                rec.update(expected=sorted(ok), correct=dec.target in ok)
+                self.n["correct"] += int(dec.target in ok)
             action = self.speller.select(dec.target)
             if action == "undo":
                 self.n["undo"] += 1
@@ -361,6 +429,7 @@ class App:
             self.n["abstain"] += 1
             q = self.worker.quality
             rec["reasons"] = q.reasons if q else []
+            rec["reasons_decoder"] = q.reasons_for(self.dec_channels) if q else []
         else:
             self.n["timeout"] += 1
         self.sess.log("decision", **rec)
@@ -374,8 +443,11 @@ class App:
             self.n["undo"],
             self.n["abstain"],
             self.n["timeout"],
+            n_correct=self.n["correct"] if self.goal is not None else None,
         )
         m.update(
+            copy_goal=self.goal,
+            cued=self.cue,
             context=self.context,
             mode=self.args.mode,
             label=self.label,
@@ -386,15 +458,21 @@ class App:
         self.sess.log("sentence", **m)
         self.last_metrics = m
         print(
-            f"[{self.label}] {self.args.mode}: {m['text']!r} {m['wpm']:.2f} wpm, {m['n_commits']} selections, "
-            f"{m['n_undo']} undo, ITR {m['itr_bits_min']:.1f} bits/min"
+            f"[{self.label}] {self.args.mode}{' CUED' if self.cue else ''}: {m['text']!r} {m['wpm']:.2f} wpm, {m['n_commits']} selections, "
+            f"{m['n_undo']} undo, accuracy {m['p_est']:.2f} ({m['p_source']}), "
+            f"{m['n_abstain']} abstain, {m['n_timeout']} timeout, ITR {m['itr_bits_min']:.1f} bits/min"
         )
 
     def draw_center(self, disp, f_text, f_small, phase: str, msg_text: str) -> None:
         ui = self.sc["ui"]
         W, H = disp.size
         cx, cy = W // 2, H // 2
-        ctx = f_small.render(f'Caregiver: "{self.context}"', True, ui["dim_rgb"])
+        top = (
+            (f'Copy{" (cued)" if self.cue else ""}: "{self.goal}"')
+            if self.goal is not None
+            else f'Caregiver: "{self.context}"'
+        )
+        ctx = f_small.render(top, True, ui["dim_rgb"])
         disp.screen.blit(ctx, ctx.get_rect(center=(cx, cy - 70)))
         txt = f_text.render((self.speller.text or "") + "_", True, ui["text_rgb"])
         disp.screen.blit(txt, txt.get_rect(center=(cx, cy)))
@@ -416,11 +494,54 @@ class App:
             disp.screen.blit(m, m.get_rect(center=(cx, cy + 60)))
         mode = f_small.render(
             f"{self.args.mode.upper()} mode  |  {self.label}  |  selections {self.n['commit']}  "
-            f"abstain {self.n['abstain']}  timeout {self.n['timeout']}",
+            f"abstain {self.n['abstain']}  timeout {self.n['timeout']}"
+            + (
+                f"  correct {self.n['correct']}/{self.n['commit']}" if self.goal is not None else ""
+            ),
             True,
             ui["dim_rgb"],
         )
         disp.screen.blit(mode, mode.get_rect(center=(cx, cy + 100)))
+
+    def label_surface(self, pg, font, lines: list[str], max_w: int):
+        """Outlined, word-wrapped label lines as one surface; cached (rendered once per label, not
+        once per 165 Hz frame)."""
+        key = (tuple(lines), max_w)
+        if key in self._label_cache:
+            return self._label_cache[key]
+        ui = self.sc["ui"]
+        wrapped: list[str] = []
+        for line in lines:
+            cur = ""
+            for word in line.split(" "):
+                trial = f"{cur} {word}".strip()
+                if cur and font.size(trial)[0] > max_w:
+                    wrapped.append(cur)
+                    cur = word
+                else:
+                    cur = trial
+            wrapped.append(cur)
+        o = ui["label_outline_px"]
+        imgs = []
+        for line in wrapped:
+            fill = font.render(line, True, ui["text_rgb"])
+            edge = font.render(line, True, ui["label_outline_rgb"])
+            surf = pg.Surface((fill.get_width() + 2 * o, fill.get_height() + 2 * o), pg.SRCALPHA)
+            for dx in (-o, 0, o):
+                for dy in (-o, 0, o):
+                    if dx or dy:
+                        surf.blit(edge, (o + dx, o + dy))
+            surf.blit(fill, (o, o))
+            imgs.append(surf)
+        w = max((i.get_width() for i in imgs), default=1)
+        h = sum(i.get_height() for i in imgs) or 1
+        out = pg.Surface((w, h), pg.SRCALPHA)
+        y = 0
+        for i in imgs:
+            out.blit(i, ((w - i.get_width()) // 2, y))
+            y += i.get_height()
+        self._label_cache[key] = out
+        return out
 
     def draw_quality(self, disp, f_small) -> None:
         ui, pg = self.sc["ui"], disp.pg
@@ -431,7 +552,10 @@ class App:
         good = self.cfgs["quality"]["good_min"]
         s = ui["quality_box_px"]
         x0, y0 = 16, 16
-        for i, (name, score) in enumerate(zip(q.ch_names, q.scores, strict=True)):
+        shown = [
+            (n, sc) for n, sc in zip(q.ch_names, q.scores, strict=True) if n in self.dec_channels
+        ]
+        for i, (name, score) in enumerate(shown):
             col = (
                 ui["highlight_rgb"]
                 if score >= good
@@ -441,7 +565,7 @@ class App:
             pg.draw.rect(disp.screen, col, r)
             lab = f_small.render(name, True, ui["dim_rgb"])
             disp.screen.blit(lab, lab.get_rect(midtop=(r.centerx, r.bottom + 2)))
-        for k, reason in enumerate(q.reasons[:3]):
+        for k, reason in enumerate(q.reasons_for(self.dec_channels)[:3]):
             img = f_small.render(reason, True, ui["warn_rgb"])
             disp.screen.blit(img, (x0, y0 + s + 30 + k * 24))
 
@@ -455,6 +579,16 @@ def main() -> None:
         "--context", default=None, help="caregiver prompt (default: cycle speller.yaml contexts)"
     )
     ap.add_argument("--once", action="store_true", help="stop after one sentence is sent")
+    ap.add_argument(
+        "--copy",
+        default=None,
+        help="copy-spelling: phrase to type (lowercase letters/spaces); every selection is scored",
+    )
+    ap.add_argument(
+        "--cue",
+        action="store_true",
+        help="with --copy: red frame on the target to look at (diagnostic; G3-style cued trials)",
+    )
     ap.add_argument("--windowed", action="store_true")
     add_electrodes_arg(ap)
     ap.add_argument(
