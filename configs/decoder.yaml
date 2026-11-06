@@ -48,3 +48,6 @@ analysis:                     # G3 offline analysis (scripts/analyze_session.py)
   pass_acc: 0.90              # G3 PASS: best FBCCA accuracy at windows <= pass_max_window_s
   partial_acc: 0.70
   pass_max_window_s: 3.0
+  min_quality_pass_frac: 0.5   # channel set eligible only if the live quality gate passes in >= this
+                               # fraction of 1 s windows of the calibration recording
+  quality_skip_s: 5.0          # ignore the start of the recording (filter settling)

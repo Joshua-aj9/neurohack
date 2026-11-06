@@ -28,6 +28,7 @@ from neurohack.eval import figures
 from neurohack.eval.offline import accuracy_by_length, binomial_p, confusion, scores_by_length
 from neurohack.markers import decode
 from neurohack.preprocessing import StreamFilter
+from neurohack.quality import assess
 from neurohack.timing import dejitter
 
 CURVE = frange(0.5, 4.0, 0.25)
@@ -94,14 +95,40 @@ def snr_at(
     return float(pxx[k] / pxx[neigh].mean())
 
 
+def quality_pass_frac(
+    raw: np.ndarray,
+    filt: np.ndarray,
+    fs: float,
+    names: list[str],
+    chans: list[str],
+    qcfg: dict,
+    quality_min: float,
+    skip_s: float,
+) -> float:
+    """Fraction of 1 s windows in which the speller's quality gate (min score over `chans`) would
+    pass. raw/filt [n_eeg, n] over the whole recording; the first skip_s (filter settling) is ignored."""
+    n = int(qcfg["window_s"] * fs)
+    idx = [names.index(c) for c in chans]
+    starts = range(int(skip_s * fs), raw.shape[1] - n + 1, n)
+    ok = [
+        assess(raw[:, s : s + n], fs, names, qcfg, filtered=filt[:, s : s + n]).scores[idx].min()
+        >= quality_min
+        for s in starts
+    ]
+    return float(np.mean(ok)) if ok else 0.0
+
+
 def analyze(sdir: Path, write_calibration: bool = True) -> dict:
     sdir = Path(sdir)
     sess = load_session(sdir)
     dc = sess["cfg"]["decoder"]
-    an = dc.get("analysis") or load_config("decoder")["analysis"]  # older sessions lack the section
+    an = {
+        **load_config("decoder")["analysis"],
+        **(dc.get("analysis") or {}),
+    }  # older sessions: defaults
     fs = sess["srate"]
     lat = dc["visual_latency_s"]
-    X, y, freqs, _ = epochs(sess, lat, 4.0)
+    X, y, freqs, filt_all = epochs(sess, lat, 4.0)
     if len(y) == 0:
         raise SystemExit("no complete trials found")
     eeg_names = [n for n, t in zip(sess["ch_names"], sess["ch_types"], strict=True) if t == "eeg"]
@@ -112,6 +139,10 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
     if "Pz" in eeg_names and "Pz" not in dc["channels"]:
         sets["config+Pz"] = ["Pz", *dc["channels"]]
     electrodes = sess["electrodes"]
+    qcfg = sess["cfg"].get("quality", {})
+    if "warn_uv" not in qcfg.get("line_noise", {}):  # sessions from before the 6 Nov quality change
+        qcfg = load_config("quality")
+    raw_eeg = sess["data"][[i for i, t in enumerate(sess["ch_types"]) if t == "eeg"]]
     out: dict = {
         "label": label,
         "electrodes": electrodes,
@@ -171,13 +202,31 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
             "final_fit": {k: v for k, v in final.items() if k != "theta_table"},
             "confusion_heldout": confusion(pred, yy, n_tg).tolist(),
         }
+        qfrac = quality_pass_frac(
+            raw_eeg,
+            filt_all,
+            fs,
+            eeg_names,
+            chans,
+            qcfg,
+            dc["stopping"]["quality_min"],
+            an["quality_skip_s"],
+        )
+        row["quality_pass_frac"] = qfrac
+        row["eligible"] = qfrac >= an["min_quality_pass_frac"]
         out["channel_sets"][name] = row
-        # choose by held-out ITR, tie-break by 2 s accuracy
-        key = (heldout["itr_bits_min"], float(af[k2]))
+        # choose by held-out ITR, tie-break by 2 s accuracy, among sets the live quality gate would
+        # let through (LIVE 6 Nov: unwetted Pz won on ITR but its quality gate passed 0% of windows)
+        key = (row["eligible"], heldout["itr_bits_min"], float(af[k2]))
         if best is None or key > best[0]:
             best = (key, name, final, s_stop, pred, yy)
     _, best_name, best_fit, s_stop, pred, yy = best
     out["selected_channel_set"] = best_name
+    if not out["channel_sets"][best_name]["eligible"]:
+        print(
+            "WARNING: no channel set passes the quality gate often enough: the speller will mostly "
+            "abstain. Fix contact (contact_check.py) and recalibrate."
+        )
     calib = {
         "label": label,
         "electrodes": electrodes,
@@ -260,6 +309,8 @@ def analyze(sdir: Path, write_calibration: bool = True) -> dict:
             f"{r['best_fbcca_le3s']['acc']:.2f}@{r['best_fbcca_le3s']['window_s']}s "
             f"(p={r['best_fbcca_le3s']['p_binom']:.1e}) | held-out stopping acc {h['accuracy_committed']:.2f} "
             f"commit {h['commit_rate']:.2f} t {h['mean_decision_s']:.2f}s ITR {h['itr_bits_min']:.1f}"
+            f" | quality gate passes {r['quality_pass_frac']:.0%}"
+            + ("" if r["eligible"] else " -> NOT ELIGIBLE")
         )
     print(f"  Oz SNR at stim freqs: { {k: round(v, 2) for k, v in snrs.items()} }")
     print(

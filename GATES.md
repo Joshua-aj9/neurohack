@@ -10,8 +10,8 @@ Labels: **SYNTHETIC** | **PUBLIC DATASET** | **LIVE (Joshua)**. Only measured nu
 | G4 Stimulus timing | **PASS** | LIVE | Fri 6 Nov 00:30 |
 | G5 LLM | **PASS with caveat**: latency PASS with Wi-Fi off; the only strict 20/20+ JSON run had Wi-Fi on | LIVE | Fri 6 Nov 00:54 |
 | Contact check (pre-G3) | dry and saline: **EEG visible** on PO7/Oz/PO8. Saline cut occipital mains ~30–50× (≈500 → 11–17 µV), alpha ratio 4.6–6.4. Decoder now uses a 47–53 Hz band-stop; quality monitor now scores the filtered signal + mains as contact (saline: 89% of windows pass) | LIVE | Fri 6 Nov 17:40 |
-| G3 Live SSVEP | WAITING FOR JOSHUA — `apps/ssvep_calibrate.py` | LIVE | — |
-| G6 Full loop | BUILT, synthetic/headless-tested; WAITING FOR G3 + JOSHUA — `apps/speller/main.py` | LIVE | — |
+| G3 Live SSVEP | **PASS**: PO7/Oz/PO8 FBCCA 0.97 @ 2 s, 1.00 @ 2.5 s (40 trials); held-out dyn. stopping acc 0.95, ITR 38.7 bits/min | LIVE (saline) | Fri 6 Nov 18:03 |
+| G6 Full loop | BUILT, synthetic/headless-tested; G3 done -> WAITING FOR JOSHUA — `apps/speller/main.py` | LIVE | — |
 | CL Closed-loop template | **PASS** synthetic part (4/4 runs); live eyes-closed test WAITING FOR JOSHUA | SYNTHETIC | Thu 5 Nov |
 | G7 ErrP (stretch) | not started (only after G6 passes) | — | — |
 
@@ -34,25 +34,47 @@ warns if you calibrated under a different condition. G0 does not need it (plumbi
    ```powershell
    uv run python scripts/llm_bench.py --wifi off
    ```
-4. **G3** (PO7/Oz/PO8 in good contact, plus Pz if you can, dry or gel; 40 trials, about 5 min including breaks).
+4. **G3** (DONE, PASS with saline). PO7/Oz/PO8 wetted with saline, plus Pz only if wetted too; 40 trials, ~5 min.
    First run `apps/contact_check.py --electrodes <same>`; it must say `EEG VISIBLE`. (The quality viewer
-   is red in a mains-heavy room because it scores the raw signal; see the contact-check entry below.)
+   shows unwetted channels red for 50 Hz / poor contact; that is expected.)
    ```powershell
-   uv run python apps/ssvep_calibrate.py --electrodes dry      # or gel / saline
+   uv run python apps/ssvep_calibrate.py --electrodes saline   # or gel / dry
    ```
    Analysis runs automatically. It writes `results/user_calibration.json`, which the speller needs.
 5. **G6** (after G3 passes). Type the same 5-word reply in both modes, then do a 10-minute run with one deliberate jaw clench:
    ```powershell
-   uv run python apps/speller/main.py --mode baseline --once --electrodes dry
-   uv run python apps/speller/main.py --mode llm --once --electrodes dry
-   uv run python apps/speller/main.py --mode llm --max-minutes 10 --electrodes dry
+   uv run python apps/speller/main.py --mode baseline --once --electrodes saline
+   uv run python apps/speller/main.py --mode llm --once --electrodes saline
+   uv run python apps/speller/main.py --mode llm --max-minutes 10 --electrodes saline
    ```
 6. **CL live** (eyes open; close them for about 10 s in the middle of each 60 s block; 4 blocks):
    ```powershell
-   uv run python apps/closedloop_demo.py --source lsl --adapt --electrodes dry
+   uv run python apps/closedloop_demo.py --source lsl --adapt --electrodes saline
    ```
 
 ---
+
+```
+GATE G3 — PASS   [LIVE (Joshua), saline on PO7/Oz/PO8, Fri 6 Nov 17:58]
+Evidence: uv run python apps/ssvep_calibrate.py --electrodes saline
+  -> sessions/20261106_175818_ssvep_calibrate_default_joshua_saline/analysis.json (local only);
+     figures/g3_*.png; results/user_calibration.json
+  40 trials, targets 8.57/10/12/15 Hz, chance 0.25; refresh measured 165.19 Hz (825-frame probe)
+  PO7/Oz/PO8 (selected): FBCCA 0.97 @ 2 s, 1.00 @ 2.5 s (binomial p=8.3e-25)
+    held-out dynamic stopping (2-fold): committed acc 0.95, commit rate 0.95, mean 1.39 s, ITR 38.7 bits/min
+    quality gate passes 87% of 1 s windows
+  Pz+PO7/Oz/PO8: FBCCA 1.00 @ 1.5 s; held-out acc 0.90, commit 1.00, 1.06 s, ITR 40.0
+    but Pz was not wetted (mains median 3062 uV): quality gate passes 0% -> NOT ELIGIBLE
+  Oz SNR at stimulus frequency: 8.57 Hz 3.06, 10 Hz 9.65, 12 Hz 24.1, 15 Hz 22.0 (4/4 clear peaks)
+  final fit on all trials: T=0.0452, theta=0.885, ECE 0.649 -> 0.023 (in-sample)
+Fix found on the way: analyze_session first selected Pz+PO7/Oz/PO8 by ITR (40.0 vs 38.7). With the
+  live quality gate the speller would have abstained on every selection. Selection now requires the
+  gate to pass in >= 50% of the recording's 1 s windows (decoder.yaml analysis.min_quality_pass_frac).
+  The same session was re-analysed: user_calibration.json now uses PO7/Oz/PO8.
+Refresh check fix: 120-frame startup probes on the G4 flip times ranged 163.3-166.8 Hz (18% outside
+  +-1 Hz -> false MISMATCH twice); 825-frame probes 164.5-165.5 Hz (0% outside). Tolerance unchanged.
+Next: G6 speller runs (saline, re-wet first).
+```
 
 ```
 CONTACT CHECK — EEG VISIBLE on PO7, Oz, PO8   [LIVE (Joshua), dry electrodes, Fri 6 Nov 17:16]

@@ -1,0 +1,20 @@
+{
+  "label": "LIVE",
+  "electrodes": "saline",
+  "session": "20261106_175818_ssvep_calibrate_default_joshua_saline",
+  "channels": [
+    "PO7",
+    "Oz",
+    "PO8"
+  ],
+  "freqs": [
+    8.57,
+    10.0,
+    12.0,
+    15.0
+  ],
+  "temperature": 0.04520620011210193,
+  "theta": 0.885,
+  "ece_before": 0.6492322410068181,
+  "ece_after": 0.023107729400681225
+}

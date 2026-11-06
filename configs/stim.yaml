@@ -3,8 +3,11 @@ refresh_hz: 165.0             # app refuses to run if the measured refresh diffe
                               # Joshua's built-in panel reads 165 Hz (Win32_VideoController, Thu 5 Nov).
                               # Presenting on a 60 Hz external monitor/projector -> set 60.0.
                               # Sampled-sinusoid mode works at any refresh; 165 Hz leaves only 6 ms per frame.
-refresh_tolerance_hz: 1.0
-refresh_probe_frames: 120     # frames flipped to measure the refresh rate at startup
+refresh_tolerance_hz: 1.0     # catches a wrong display mode (60/120/144 Hz); flicker itself is timed
+                              # from flip times, so a ~1 Hz refresh error does not shift SSVEP frequency
+refresh_probe_frames: 825     # frames flipped at startup (~5 s at 165 Hz). LIVE G4 flip times (6 Nov):
+                              # 120-frame probes ranged 163.3-166.8 Hz (18% outside +-1, the false
+                              # MISMATCH Joshua hit); 825-frame probes 164.5-165.5 Hz (0% outside)
 fullscreen: true
 vsync: true
 display_index: 0

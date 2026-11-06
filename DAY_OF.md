@@ -25,13 +25,13 @@
    Then the measured version (1 min; one beep = close eyes, two beeps = open). It needs
    `CONTACT CHECK - EEG VISIBLE` on at least one decoder channel before G3 or the demo:
    ```powershell
-   uv run python apps/contact_check.py --electrodes dry   # or gel / saline
+   uv run python apps/contact_check.py --electrodes saline   # or gel / dry
    ```
 9. Set the display refresh to what `configs/stim.yaml` says (`refresh_hz`). The stimulus apps refuse to run on a mismatch.
 
 ## 2. One-command demo launch
 ```powershell
-uv run python apps/speller/main.py --mode llm --electrodes dry   # or gel / saline: must match how you calibrated
+uv run python apps/speller/main.py --mode llm --electrodes saline   # must match how you calibrated
 ```
 - **Fallback without the headset:** add `--source synthetic` (labelled SYNTHETIC on screen). Keys 1–4 look at a target, C triggers a jaw clench, which demonstrates abstention.
 - **Fallback for idea B:** `uv run python apps/quality_viewer.py --source lsl`.
@@ -56,12 +56,12 @@ Rule: if a challenge needs < 4 h of new code on top of these, take it; otherwise
 2. Headset on. Gel at PO7/Oz/PO8 (about 60 s). `quality_viewer` must show green.
 3. Quick calibration, 3 trials per target, about 75 s. More trials give a more reliable T/θ fit; the minimum workable number is untested:
    ```powershell
-   uv run python apps/ssvep_calibrate.py --trials-per-target 3 --participant J01 --electrodes dry
+   uv run python apps/ssvep_calibrate.py --trials-per-target 3 --participant J01 --electrodes saline
    ```
    This overwrites `results/user_calibration.json`. Joshua's own calibration stays in his session folder; copy `calibration.json` back from there afterwards.
 4. One sentence in LLM mode:
    ```powershell
-   uv run python apps/speller/main.py --mode llm --once --participant J01 --electrodes dry
+   uv run python apps/speller/main.py --mode llm --once --participant J01 --electrodes saline
    ```
 5. Note words/min and ITR from the screen. Everything is logged in `sessions/*_J01`.
 6. Afterwards, run `uv run python scripts/make_pitch_figures.py`. Only LIVE sessions go into the live figures.
