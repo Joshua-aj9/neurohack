@@ -1,0 +1,40 @@
+# SSVEP stimulus (pygame-ce, fullscreen, vsync).
+refresh_hz: 165.0             # app refuses to run if the measured refresh differs by > tolerance.
+                              # Joshua's built-in panel reads 165 Hz (Win32_VideoController, Thu 5 Nov).
+                              # Presenting on a 60 Hz external monitor/projector -> set 60.0.
+                              # Sampled-sinusoid mode works at any refresh; 165 Hz leaves only 6 ms per frame.
+refresh_tolerance_hz: 1.0
+refresh_probe_frames: 120     # frames flipped to measure the refresh rate at startup
+fullscreen: true
+vsync: true
+display_index: 0
+
+mode: sinusoid                # sinusoid: L(t)=0.5*(1+sin(2*pi*f*t+phi)) on each flip time | square
+frequency_sets:
+  default: [8.57, 10.0, 12.0, 15.0]   # handoff default (60 Hz-friendly: 60/7, 60/6, 60/5, 60/4)
+  # Avoids the 8-13 Hz alpha band (alpha can bias decoding toward 10 Hz). No set member is a
+  # harmonic of another (6.5->13, 7.5->15, 13.5->27, 16.5->33). NOTE: fundamentals below 8 Hz need
+  # decoder.fbcca.subband_low_start_hz <= 6 (decoder validates this).
+  non_alpha: [6.5, 7.5, 13.5, 16.5]
+active_set: default
+phases_pi: [0.0, 0.5, 1.0, 1.5]   # phase offsets in units of pi, per target
+
+layout:
+  target_size_px: 260
+  margin_frac: 0.08            # distance of targets from screen edge, fraction of the short side
+  background_rgb: [0, 0, 0]
+  text_rgb: [230, 230, 230]
+  cue_rgb: [255, 60, 60]
+  font_size: 40
+
+trial:
+  cue_s: 1.0
+  stim_s: 4.0
+  rest_s: 1.0
+
+timing_test:
+  duration_s: 60.0
+  drop_factor: 1.5             # a frame interval > drop_factor * nominal counts as a dropped frame
+  pass_drop_frac: 0.005
+  partial_drop_frac: 0.02
+  pass_interval_std_ms: 1.0

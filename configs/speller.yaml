@@ -1,0 +1,32 @@
+# SSVEP + LLM speller (apps/speller). Targets: 0=top 1=right 2=bottom 3=left (stim.yaml frequency order).
+letters: "abcdefghijklmnopqrstuvwxyz"
+labels:                       # ASCII labels render in every font
+  space: "space"
+  undo: "undo"
+  send: "send"
+  back: "back"
+  more: "more >"
+  cancel: "cancel"
+return_to_suggestions_after_letter: true
+contexts:
+  - "How are you feeling today?"
+  - "Do you want something to drink?"
+  - "Are you comfortable?"
+  - "What would you like to do this afternoon?"
+timing:
+  feedback_s: 0.6             # selected target highlighted
+  gap_s: 0.5                  # static targets between selections (counted in ITR / wpm time)
+  message_s: 1.2              # abstain / timeout message
+  result_s: 4.0               # metrics screen after "send"
+ui:
+  text_font_size: 46
+  label_font_size: 30
+  small_font_size: 22
+  text_rgb: [235, 235, 235]
+  dim_rgb: [140, 140, 140]
+  highlight_rgb: [60, 200, 90]
+  warn_rgb: [240, 170, 40]
+  bad_rgb: [230, 60, 60]
+  quality_box_px: 26
+calibration_file: results/user_calibration.json
+synthetic_calibration_trials_per_target: 10

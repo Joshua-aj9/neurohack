@@ -1,0 +1,9 @@
+ "triggers_outside": [],
+latency threshold->actuator (all triggers incl. sham): median 7.8 ms, max 8.7 ms; audio buffer adds ~5.8 ms (+ OS output)
+GATE CL - PASS   [SYNTHETIC]
+ "triggers_outside": [],
+latency threshold->actuator (all triggers incl. sham): median 8.0 ms, max 8.3 ms; audio buffer adds ~5.8 ms (+ OS output)
+GATE CL - PASS   [SYNTHETIC]
+ "triggers_outside": [],
+latency threshold->actuator (all triggers incl. sham): median 7.1 ms, max 8.5 ms; audio buffer adds ~5.8 ms (+ OS output)
+GATE CL - PASS   [SYNTHETIC]

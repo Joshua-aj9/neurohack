@@ -1,0 +1,36 @@
+# Per-channel signal quality over a rolling window. Each check maps its metric to a penalty in
+# [0,1] with a linear ramp between `warn` (penalty 0) and `bad` (penalty 1).
+# Channel score = prod(1 - penalty). Reasons are emitted for penalty >= reason_min_penalty.
+window_s: 1.0
+reason_min_penalty: 0.5
+good_min: 0.7                 # UI: green >= good_min, amber >= decoder.stopping.quality_min, red below
+
+flatline:                     # std of linearly detrended signal, uV (lower is worse)
+  warn: 1.0
+  bad: 0.3
+railing:                      # peak-to-peak of detrended signal, uV (higher is worse)
+  warn: 300.0
+  bad: 1000.0
+clipping:                     # fraction of samples stuck at window min/max (higher is worse)
+  warn: 0.02
+  bad: 0.10
+line_noise:                   # P(48-52 Hz) / P(1-45 Hz) on raw signal (higher is worse)
+  band_hz: [48.0, 52.0]
+  ref_band_hz: [1.0, 45.0]
+  warn: 0.5
+  bad: 2.0
+emg:                          # P(20-45 Hz) / P(1-20 Hz) (higher is worse)
+  band_hz: [20.0, 45.0]
+  ref_band_hz: [1.0, 20.0]
+  warn: 0.6
+  bad: 1.5
+motion:                       # applied to all channels
+  accel_std_g:                # std of |acc| over window
+    warn: 0.02
+    bad: 0.10
+  gyro_mean_dps:              # mean |gyro| over window, deg/s
+    warn: 5.0
+    bad: 25.0
+counter:                      # fraction of samples lost (counter gaps), applied to all channels
+  warn: 0.001
+  bad: 0.02

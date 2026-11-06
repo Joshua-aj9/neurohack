@@ -1,0 +1,59 @@
+# Local LLM via LM Studio (OpenAI-compatible). Joshua loads the model in LM Studio.
+base_url: http://localhost:1234/v1
+api_key: lm-studio            # LM Studio ignores the key; the client library requires one
+model: google/gemma-4-e4b      # suggestion (small, non-thinking); null = first model from GET /v1/models
+                              # (on this machine that is a 27B -> 2 s timeouts). Joshua decides at G5.
+timeout_s: 2.0
+n_suggestions: 3              # speller shows 3 suggestions + "more"; G5 benchmark asks for 4
+temperature: 0.4
+max_tokens: 120
+structured_output: true       # use response_format json_schema; falls back to text JSON parsing
+
+system_prompt: >-
+  You are the word-prediction engine of a communication aid for a person with ALS who selects
+  text by eye gaze. Given what a caregiver said and the reply typed so far, propose the most
+  likely continuations of the reply. Each suggestion is a short continuation of 1 to 4 words
+  that directly extends the partial reply (do not repeat it). If the reply ends in an unfinished
+  word, the first word of every suggestion must be that word completed. Prefer first-person, plain,
+  useful phrases. Respond only with JSON: {"suggestions": ["...", "..."]}.
+
+benchmark:
+  n_calls: 20
+  n_suggestions: 4
+  pass_p90_s: 1.0
+  partial_p90_s: 2.0
+  prompts:                    # [caregiver context, partial reply]; cycled to n_calls
+    - ["How are you feeling today?", ""]
+    - ["How are you feeling today?", "I am"]
+    - ["Do you want something to drink?", ""]
+    - ["Do you want something to drink?", "Yes, can I"]
+    - ["Are you in any pain?", "A little in my"]
+    - ["Who would you like to visit this weekend?", "I would like"]
+    - ["Shall I turn the TV on?", ""]
+    - ["Did you sleep well?", "Not really, I"]
+    - ["What would you like for dinner?", "Something"]
+    - ["Is the room too warm?", "It is a bit"]
+
+# Static fallback used when the server is down, slow, or returns invalid JSON.
+fallback:
+  starters: ["I", "I am", "Yes", "No", "Please", "Thank you", "I need", "Can you"]
+  continuations: ["please", "thank you", "and", "now", "a bit", "later"]
+  phrases:
+    - "I am fine"
+    - "I am tired"
+    - "I am in pain"
+    - "I need help"
+    - "I need water"
+    - "I need the toilet"
+    - "Please call the nurse"
+    - "Please move my head"
+    - "Thank you"
+    - "Yes please"
+    - "No thank you"
+    - "I love you"
+    - "Can you turn over"
+    - "Can you open the window"
+    - "I feel better today"
+    - "I feel a bit sick"
+    - "It hurts here"
+    - "Not right now"

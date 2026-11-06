@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+# large data & recordings stay out of git
+data/
+sessions/
+*.xdf
+*.npz
+*.edf
+*.bdf
+*.fif
+# results/*.json and figures/*.png are small and tracked as gate evidence

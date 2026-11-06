@@ -1,0 +1,48 @@
+# SSVEP decoder (FBCCA, Chen et al. 2015) + calibration + dynamic stopping.
+method: fbcca                 # fbcca | cca
+channels: [PO7, Oz, PO8]
+n_harmonics: 5
+visual_latency_s: 0.14        # window starts this long after stimulus onset (visual pathway delay)
+
+preprocessing:                # causal, stateful, applied to the stream before windowing
+  notch_hz: 50.0              # UK mains
+  notch_q: 30.0
+  bandpass_hz: [1.0, 90.0]
+  bandpass_order: 4
+  car: false                  # common average reference over eeg channels
+
+fbcca:
+  n_subbands: 5
+  subband_low_start_hz: 8.0   # sub-band m low edge = start + step*(m-1); Chen 2015: 8m
+  subband_low_step_hz: 8.0
+  subband_high_hz: 88.0
+  stop_margin_hz: 2.0         # Chebyshev stopband edges = passband -/+ margin (upper: +10)
+  stop_margin_high_hz: 10.0
+  gpass_db: 3.0
+  gstop_db: 40.0
+  ripple_db: 0.5
+  weight_a: 1.25              # w(m) = m^-a + b
+  weight_b: 0.25
+  pad_s: 0.5                  # odd-reflection padding for zero-phase filtering of the window
+
+stopping:
+  min_window_s: 1.0
+  step_s: 0.25
+  max_window_s: 4.0
+  theta: 0.90                 # overwritten by calibration (fit_theta) for a live user
+  target_accuracy: 0.95
+  theta_grid: [0.30, 0.995, 0.005]   # start, stop, step for theta search
+  on_timeout: abstain          # abstain | argmax
+  quality_min: 0.5             # abstain if min quality over decision channels below this
+
+calibration:
+  temperature: 1.0            # overwritten by fit_temperature
+  ece_bins: 10
+
+analysis:                     # G3 offline analysis (scripts/analyze_session.py)
+  snr_half_bw_hz: 1.0         # neighbourhood for PSD SNR at each stimulus frequency
+  snr_exclude_hz: 0.3         # bins this close to f0 are excluded from the neighbourhood
+  snr_min: 2.0                # "clear peak" if P(f0)/mean(P(neighbours)) >= snr_min
+  pass_acc: 0.90              # G3 PASS: best FBCCA accuracy at windows <= pass_max_window_s
+  partial_acc: 0.70
+  pass_max_window_s: 3.0

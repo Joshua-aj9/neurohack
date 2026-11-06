@@ -1,0 +1,48 @@
+# g.tec Unicorn Hybrid Black via UnicornLSL.
+# Facts below are from the official UnicornLSL source (unicorn-bi/Unicorn-Suite-Hybrid-Black,
+# "Unicorn .NET API/UnicornLSL/UnicornLSL/MainUI.cs"):
+#   - "combined" mode: ONE stream, type "Data", 17 x float32 @ 250 Hz, name = device serial,
+#     pushed one sample at a time (=> per-sample LSL timestamps are jittery -> use timing.dejitter).
+#   - "split" mode: six streams <serial>_EEG/_ACC/_GYR/_CNT/_BAT/_VALID with types EEG/ACC/GYR/CNT/BAT/VALID.
+# UNCONFIRMED (verify at G0 with apps/stream_check.py, which auto-detects the counter):
+#   - index 14 vs 15: the split-mode code reads the counter at offset 14 and the battery at 15.
+#     The Unicorn API channel list (recalled, not checked against the docs) has battery at 14 and the counter at 15.
+#   - electrode order Fz,C3,Cz,C4,Pz,PO7,Oz,PO8 (handoff default; confirm against the cap labels).
+name: unicorn_hybrid_black
+srate: 250.0
+srate_tolerance_hz: 1.0
+
+lsl:
+  mode: combined            # combined | split
+  stream_type: Data         # combined-mode type; split mode resolves type EEG (+ CNT/ACC/GYR)
+  stream_name: null         # null = first stream of that type; else exact serial e.g. "UN-2021.05.36"
+  resolve_timeout_s: 5.0
+  marker_stream_name: neurohack_markers
+  marker_stream_type: Markers
+
+eeg_channels: [Fz, C3, Cz, C4, Pz, PO7, Oz, PO8]
+
+# Index of each named channel in the combined 17-channel stream.
+channel_index:
+  Fz: 0
+  C3: 1
+  Cz: 2
+  C4: 3
+  Pz: 4
+  PO7: 5
+  Oz: 6
+  PO8: 7
+  AccX: 8
+  AccY: 9
+  AccZ: 10
+  GyrX: 11
+  GyrY: 12
+  GyrZ: 13
+  Battery: 14     # UNCONFIRMED — may be Counter (see header)
+  Counter: 15     # UNCONFIRMED — may be Battery (see header)
+  Validation: 16
+
+units:
+  eeg: uV
+  accel: g
+  gyro: deg/s

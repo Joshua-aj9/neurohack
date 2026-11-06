@@ -1,0 +1,18 @@
+S01 n= 46  2s: FBCCA 0.85 (p=8.5e-13)  CCA 0.65  | 4s: FBCCA 0.80 CCA 0.70 | stop: acc 0.88 commit 0.54 t 2.51s ITR 8.7
+S02 n= 47  2s: FBCCA 0.47 (p=3.8e-02)  CCA 0.45  | 4s: FBCCA 0.45 CCA 0.38 | stop: acc 0.53 commit 0.32 t 3.16s ITR 0.6
+S03 n= 48  2s: FBCCA 0.90 (p=7.3e-16)  CCA 0.83  | 4s: FBCCA 0.96 CCA 0.96 | stop: acc 0.88 commit 0.83 t 1.64s ITR 17.4
+S04 n= 47  2s: FBCCA 0.81 (p=3.0e-11)  CCA 0.89  | 4s: FBCCA 0.94 CCA 0.96 | stop: acc 1.00 commit 0.57 t 2.44s ITR 15.9
+S05 n= 48  2s: FBCCA 0.48 (p=2.5e-02)  CCA 0.48  | 4s: FBCCA 0.50 CCA 0.52 | stop: acc 0.69 commit 0.27 t 3.28s ITR 1.5
+S06 n= 46  2s: FBCCA 0.52 (p=6.4e-03)  CCA 0.54  | 4s: FBCCA 0.59 CCA 0.50 | stop: acc 0.59 commit 0.37 t 2.95s ITR 1.1
+S07 n= 71  2s: FBCCA 0.96 (p=6.2e-29)  CCA 0.90  | 4s: FBCCA 0.96 CCA 0.94 | stop: acc 0.95 commit 0.83 t 1.74s ITR 22.6
+S08 n= 46  2s: FBCCA 0.80 (p=7.2e-11)  CCA 0.83  | 4s: FBCCA 0.80 CCA 0.80 | stop: acc 0.96 commit 0.54 t 2.52s ITR 12.1
+S09 n= 46  2s: FBCCA 0.63 (p=3.6e-05)  CCA 0.63  | 4s: FBCCA 0.87 CCA 0.72 | stop: acc 0.85 commit 0.28 t 3.20s ITR 3.3
+S10 n= 94  2s: FBCCA 0.70 (p=3.1e-13)  CCA 0.59  | 4s: FBCCA 0.77 CCA 0.60 | stop: acc 0.93 commit 0.32 t 3.11s ITR 5.4
+S11 n= 47  2s: FBCCA 0.68 (p=1.2e-06)  CCA 0.51  | 4s: FBCCA 0.79 CCA 0.62 | stop: acc 0.93 commit 0.32 t 3.14s ITR 5.4
+S12 n=119  2s: FBCCA 0.98 (p=4.7e-53)  CCA 0.97  | 4s: FBCCA 0.99 CCA 0.98 | stop: acc 0.97 commit 1.00 t 1.00s ITR 40.2
+
+FBCCA > CCA at 2s: 7/12 (ties 2); over mean of windows: 10/12
+FBCCA above chance p<0.01 at 2s: 10/12; mean acc 2s FBCCA 0.732 CCA 0.689
+dyn. stopping pooled held-out: {'accuracy_committed': 0.9020100502512562, 'commit_rate': 0.5645390070921986, 'n_committed': 398, 'ece_raw': 0.39151359432436766, 'ece_calibrated_heldout': 0.01876160402045562}; mean decision 2.56s; mean ITR 11.2 bits/min
+SYNTHETIC 5uV: FBCCA 2s 0.958, 4s 1.000
+-> results\g2_moabb.json, figures/g2_*.png

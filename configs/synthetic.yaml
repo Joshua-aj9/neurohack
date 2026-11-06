@@ -1,0 +1,16 @@
+# Synthetic Unicorn-like source (same channel layout as device.yaml). SYNTHETIC data only.
+seed: 0
+noise_uv: 8.0                 # broadband (pink) EEG background amplitude, per channel std
+white_uv: 2.0
+alpha_uv: 6.0                 # background alpha (10 Hz) amplitude on posterior channels
+alpha_hz: 10.0
+line_uv: 3.0                  # 50 Hz mains amplitude
+dc_uv: 0.0
+ssvep:
+  amplitude_uv: 5.0           # fundamental on Oz (PO7/PO8 get spatial_gain * this). ARBITRARY SNR:
+                              # 1.5 -> FBCCA ~chance, 3.0 -> 0.71@2s, 5.0 -> 0.96@2s (see GATES.md G2)
+  harmonic_decay: 0.5         # amplitude of harmonic k = amplitude * decay^(k-1)
+  n_harmonics: 3
+  spatial_gain: {Oz: 1.0, PO7: 0.7, PO8: 0.7, Pz: 0.3}
+  latency_s: 0.14
+chunk_s: 0.04                 # chunk size when not real-time paced

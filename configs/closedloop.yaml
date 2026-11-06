@@ -1,0 +1,39 @@
+# Closed-loop template: band-power feature -> threshold/hysteresis/refractory controller -> actuator.
+feature:
+  type: bandpower_rel          # bandpower_rel: P(band)/P(ref_band); bandpower_abs: P(band) in uV^2/Hz
+  channels: [Oz, PO7, PO8]
+  band_hz: [8.0, 12.0]
+  ref_band_hz: [2.0, 30.0]
+  window_s: 1.0
+  update_s: 0.05              # controller tick
+  smoothing_alpha: 0.5         # EMA on the feature (1 = no smoothing)
+
+controller:
+  threshold_on: 0.55          # trigger when feature rises above (set from SYNTHETIC rest p99.5=0.46;
+                              # live: use --adapt -> mean + k*sd of the first baseline block)
+  threshold_off: 0.40         # re-arm only after feature falls below (hysteresis)
+  refractory_s: 2.0           # min time between triggers
+  baseline_adapt: false       # if true, thresholds = baseline mean + k*std from the baseline block
+  k_on: 4.0
+  k_off: 2.0
+
+actuator:
+  type: audio                  # audio | visual | log_only
+  tone_hz: 440.0
+  tone_ms: 100
+  volume: 0.3
+  mixer_buffer: 256            # samples; smaller -> lower output latency
+
+protocol:                      # alternating blocks; in baseline blocks triggers are logged as sham
+  blocks: [baseline, stimulation, baseline, stimulation]
+  block_s: 60.0
+  quality_min: 0.5             # suppress triggers when decision-channel quality is below this
+
+synthetic_test:                 # apps/closedloop_demo.py --synthetic-test  (SYNTHETIC)
+  blocks: [baseline, stimulation]
+  block_s: 30.0
+  alpha_on_s: [[10, 20], [40, 50]] # "eyes closed" episodes (one in each block), seconds from start
+  rest_alpha_gain: 0.3            # eyes open (alpha desynchronised)
+  on_alpha_gain: 3.0              # eyes closed
+  max_onset_delay_s: 2.0          # a correct trigger falls within this long after episode onset
+  max_latency_ms: 100.0
