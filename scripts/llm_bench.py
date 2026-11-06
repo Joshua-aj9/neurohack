@@ -40,7 +40,8 @@ def main() -> None:
     for i in range(n_calls):
         ctx, partial = b["prompts"][i % len(b["prompts"])]
         s = client.suggest(ctx, partial, n_sug)
-        valid = s.source == "llm" and len(s.items) == n_sug
+        valid = s.strict_json  # gate criterion: the reply itself is valid JSON with n suggestions
+        usable = s.source == "llm" and len(s.items) == n_sug  # after parsing/repair, no fallback
         rows.append(
             {
                 "context": ctx,
@@ -48,6 +49,8 @@ def main() -> None:
                 "latency_s": s.latency_s,
                 "source": s.source,
                 "valid_json": valid,
+                "usable": usable,
+                "repaired": s.repaired,
                 "items": s.items,
                 "error": s.error,
             }
@@ -56,9 +59,11 @@ def main() -> None:
         print(
             f"{i + 1:2d} {s.latency_s * 1e3:6.0f} ms  {s.source:13s} {partial!r:22s} -> {s.items}"
             + (f"   [error: {s.error}]" if s.error else "")
+            + ("" if valid else "   [NOT strict JSON" + (", repaired]" if s.repaired else "]"))
         )
     lat = np.array([r["latency_s"] for r in rows])
     n_valid = sum(r["valid_json"] for r in rows)
+    n_usable = sum(r["usable"] for r in rows)
     p50, p90 = float(np.percentile(lat, 50)), float(np.percentile(lat, 90))
     if n_valid == n_calls and p90 < b["pass_p90_s"]:
         v = "PASS"
@@ -72,6 +77,7 @@ def main() -> None:
         "n_calls": n_calls,
         "n_suggestions": n_sug,
         "n_valid": n_valid,
+        "n_usable_after_repair": n_usable,
         "latency_p50_s": p50,
         "latency_p90_s": p90,
         "latency_max_s": float(lat.max()),
@@ -82,7 +88,10 @@ def main() -> None:
     sess.save_results(res)
     sess.close()
     print(json.dumps({k: v for k, v in res.items() if k != "calls"}, indent=1))
-    print(f"\nGATE G5 - {v}   [LIVE]  wifi={args.wifi}")
+    print(
+        f"\nstrict JSON {n_valid}/{n_calls} (gate criterion); usable after repair {n_usable}/{n_calls}"
+    )
+    print(f"GATE G5 - {v}   [LIVE]  wifi={args.wifi}")
     print(f"Evidence: {sess.dir / 'results.json'}")
 
 

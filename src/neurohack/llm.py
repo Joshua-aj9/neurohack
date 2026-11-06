@@ -19,12 +19,55 @@ class Suggestions:
     latency_s: float
     error: str | None = None
     raw: str | None = None
+    strict_json: bool = False  # whole reply was valid JSON with exactly n string suggestions
+    repaired: bool = False  # items recovered from malformed JSON by repair_suggestions()
+
+
+_FENCE = re.compile(r"^```(?:json)?|```$", flags=re.MULTILINE)
+_JSON_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')  # a JSON string literal (handles \" escapes)
+
+
+def strict_json_ok(raw: str | None, n: int) -> bool:
+    """True if the reply (code fences allowed) is valid JSON {"suggestions": [n strings]}."""
+    if not raw:
+        return False
+    try:
+        obj = json.loads(_FENCE.sub("", raw.strip()).strip())
+    except json.JSONDecodeError:
+        return False
+    sug = obj.get("suggestions") if isinstance(obj, dict) else None
+    return isinstance(sug, list) and len(sug) == n and all(isinstance(s, str) for s in sug)
+
+
+def repair_suggestions(text: str) -> list[str]:
+    """Recover the strings of a malformed/truncated "suggestions" list, e.g. a missing ']'
+    (seen live on gemma-4-e4b, 6 Nov: '{"suggestions": ["a", "b", "c", "d"}')."""
+    m = re.search(r'"suggestions"\s*:\s*\[(.*)', text, flags=re.DOTALL)
+    if not m:
+        return []
+    body = m.group(1)
+    end = body.find("]")
+    body = body if end < 0 else body[:end]
+    out = []
+    for s in _JSON_STRING.findall(body):
+        try:
+            s = json.loads(f'"{s}"')
+        except json.JSONDecodeError:
+            continue
+        if s.strip():
+            out.append(s.strip())
+    return out
 
 
 def parse_suggestions(text: str) -> list[str]:
     """Extract a list of strings from model output: {"suggestions": [...]} or a bare JSON array."""
+    return _parse(text)[0]
+
+
+def _parse(text: str) -> tuple[list[str], bool]:
+    """(items, repaired). Raises ValueError if nothing usable can be recovered."""
     text = text.strip()
-    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
+    text = _FENCE.sub("", text).strip()
     candidates = [text]
     m = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if m:
@@ -42,18 +85,36 @@ def parse_suggestions(text: str) -> list[str]:
                 "suggestions", next((v for v in obj.values() if isinstance(v, list)), None)
             )
         if isinstance(obj, list) and all(isinstance(s, str) for s in obj):
-            return [s.strip() for s in obj if s.strip()]
+            return [s.strip() for s in obj if s.strip()], False
+    fixed = repair_suggestions(text)
+    if fixed:
+        return fixed, True
     raise ValueError(f"no JSON suggestions in: {text[:200]!r}")
+
+
+def _norm(word: str) -> str:
+    return word.lower().strip(".,!?;:'\"")
+
+
+def strip_overlap(s: str, partial: str) -> str:
+    """Remove the longest run of leading words of s that repeats the trailing words of partial.
+
+    "Yes, can I" + "can I have tea?" -> "have tea?"  (models often echo the end of the reply)
+    """
+    pw, sw = [_norm(w) for w in partial.split()], s.split()
+    for k in range(min(len(pw), len(sw)), 0, -1):
+        if [_norm(w) for w in sw[:k]] == pw[-k:]:
+            return " ".join(sw[k:])
+    return s
 
 
 def clean(items: list[str], partial: str) -> list[str]:
     """Drop duplicates / empties / echoes of the already-typed text; keep order."""
     seen, out = set(), []
-    p = partial.strip().lower()
     for s in items:
         s = s.strip().strip('"').strip()
-        if p and s.lower().startswith(p):
-            s = s[len(p) :].strip()
+        if partial.strip():
+            s = strip_overlap(s, partial).strip()
         k = s.lower()
         if s and k not in seen:
             seen.add(k)
@@ -151,7 +212,9 @@ class LLMClient:
                 **kwargs,
             )
             raw = resp.choices[0].message.content or ""
-            items = clean(parse_suggestions(raw), partial)
+            parsed, repaired = _parse(raw)
+            strict = strict_json_ok(raw, n)
+            items = clean(parsed, partial)
             if len(items) < n:
                 items += [
                     s
@@ -159,9 +222,17 @@ class LLMClient:
                     if s not in items
                 ]
                 return Suggestions(
-                    items[:n], "llm+fallback", time.perf_counter() - t0, "short list", raw
+                    items[:n],
+                    "llm+fallback",
+                    time.perf_counter() - t0,
+                    "short list",
+                    raw,
+                    strict,
+                    repaired,
                 )
-            return Suggestions(items[:n], "llm", time.perf_counter() - t0, None, raw)
+            return Suggestions(
+                items[:n], "llm", time.perf_counter() - t0, None, raw, strict, repaired
+            )
         except Exception as e:  # never let the UI die on LLM problems
             return Suggestions(
                 fallback_suggestions(partial, n, self.cfg["fallback"]),

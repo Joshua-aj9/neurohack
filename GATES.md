@@ -6,9 +6,9 @@ Labels: **SYNTHETIC** | **PUBLIC DATASET** | **LIVE (Joshua)**. Only measured nu
 |---|---|---|---|
 | G1 Pipeline | **PASS** | SYNTHETIC | Thu 5 Nov |
 | G2 Offline decoder | **PASS** (see onset caveat) | PUBLIC DATASET + SYNTHETIC | Thu 5 Nov |
-| G0 Plumbing | WAITING FOR JOSHUA — `apps/stream_check.py` ready | LIVE | — |
-| G4 Stimulus timing | WAITING FOR JOSHUA — `apps/ssvep_stim.py` ready | LIVE | — |
-| G5 LLM | WAITING FOR JOSHUA — `scripts/llm_bench.py` | LIVE | — |
+| G0 Plumbing | **PASS** | LIVE | Fri 6 Nov 00:27 |
+| G4 Stimulus timing | **PASS** | LIVE | Fri 6 Nov 00:30 |
+| G5 LLM | **PASS with caveat**: latency PASS with Wi-Fi off; the only strict 20/20+ JSON run had Wi-Fi on | LIVE | Fri 6 Nov 00:54 |
 | G3 Live SSVEP | WAITING FOR JOSHUA — `apps/ssvep_calibrate.py` | LIVE | — |
 | G6 Full loop | BUILT, synthetic/headless-tested; WAITING FOR G3 + JOSHUA — `apps/speller/main.py` | LIVE | — |
 | CL Closed-loop template | **PASS** synthetic part (4/4 runs); live eyes-closed test WAITING FOR JOSHUA | SYNTHETIC | Thu 5 Nov |
@@ -20,13 +20,12 @@ eurohack` in PowerShell. Each one prints a `GATE Gx - ...` line and the evidence
 LIVE apps require `--electrodes gel|dry|saline|none`. It is stored in every `results.json`, and the speller
 warns if you calibrated under a different condition. G0 does not need it (plumbing only).
 
-1. **G0** (headset on, UnicornLSL acquiring in combined "Data" mode). Run it twice: once with Wi-Fi on, once off.
+1. **G0** (UnicornLSL acquiring in combined "Data" mode; the headset need not be worn). Run the commands
+   ONE AT A TIME, never in two terminals at once. The Wi-Fi-off run is the one that counts.
    ```powershell
-   uv run python apps/stream_check.py --list
-   uv run python apps/stream_check.py --minutes 10 --wifi on
    uv run python apps/stream_check.py --minutes 10 --wifi off
    ```
-   Also paste the `channel_roles_guess` block. It settles whether index 14 or 15 is the counter.
+   The counter index is already settled (15, confirmed 6 Nov).
 2. **G4** (no headset needed, fullscreen; look at the screen; ESC aborts). `configs/stim.yaml` is set to 165 Hz, which `Win32_VideoController` reports for your panel.
    ```powershell
    uv run python apps/ssvep_stim.py
@@ -120,6 +119,96 @@ Evidence of function (SYNTHETIC, SDL dummy display, simulated gaze):
   speller logs per decision: kind, target, p_max, window, quality, reasons, action, text, full window history;
   per sentence: words/min, selections, undo, abstain, timeout, ITR; stimulus frame stats during decoding
 Next: LIVE run after G3 [JOSHUA].
+```
+
+```
+GATE G5 — PASS with caveat   [LIVE, google/gemma-4-e4b, plain JSON mode (structured_output: false)]
+Evidence:
+  run A, Wi-Fi OFF, 20 calls x 4 suggestions (00:49): p50 0.620 s, p90 0.673 s, max 0.710 s;
+    19/20 strict JSON. Call 3 dropped the closing ']' ('..."Just a little"}') -> fell back to the
+    static list (the repair below did not exist yet)  -> sessions/20261106_004939_llm_bench
+  run B, Wi-Fi ON (Joshua had re-enabled it), 100 calls: 100/100 strict JSON, p50 0.615 s,
+    p90 0.705 s, max 0.802 s; script verdict PASS  -> sessions/20261106_005312_llm_bench
+  malformed JSON in plain mode today: 1 of 160 calls (run A 20 + diagnostics 40 + run B 100)
+  Added: repair_suggestions() recovers strings from an unclosed/truncated list (tested on the exact
+    live reply); the bench now reports strict JSON (gate criterion) and usable-after-repair separately.
+Caveat: by the letter (20 calls, all valid JSON, Wi-Fi off) no single run meets every condition:
+  A had Wi-Fi off but 19/20 strict; B had 100/100 but Wi-Fi on. Inference is local (localhost), so
+  Wi-Fi is not expected to change it, but that was not measured. For a by-the-letter PASS:
+  `uv run python scripts/llm_bench.py --wifi off`.
+Decision: continue (does not block G3/G6)
+Next: G3.
+```
+
+```
+GATE G5 — first attempt, superseded: PARTIAL   [LIVE, google/gemma-4-e4b in LM Studio, Wi-Fi off]
+Evidence: uv run python scripts/llm_bench.py --wifi off   (00:40, structured_output: true, 4 suggestions)
+  20/20 valid JSON, p50 1.079 s, p90 1.164 s, max 1.195 s  (PASS needs p90 < 1 s)
+  -> sessions/20261106_004027_llm_bench/results.json
+Diagnosis (LIVE diagnostic calls, same model, not the gate script; Wi-Fi state not re-checked):
+  decode speed ~40 tok/s in every condition; json_schema mode makes the model emit ~45 completion
+  tokens for 4 suggestions vs ~25 in plain mode (prompt 157 tokens either way)
+  20 calls each, plain mode: 4 suggestions 20/20 valid, p50 644 / p90 696 / max 745 ms;
+                             3 suggestions (what the speller uses) 20/20 valid, p50 512 / p90 573 ms
+Remediation: configs/llm.yaml structured_output: false (parser + static fallback still catch bad
+  output). Speller now starts the LLM call at commit time, overlapping the 0.6 s feedback highlight.
+  Bug found in the G5 log and fixed: "Yes, can I" + "can I have tea?" typed "can I" twice ->
+  clean() now strips any word overlap between the end of the reply and the start of a suggestion.
+Decision: remediation (same model, cheaper output format)
+Next: rerun the official benchmark to confirm: uv run python scripts/llm_bench.py --wifi off
+```
+
+```
+GATE G4 — PASS   [LIVE, built-in panel, fullscreen, stimulus only]
+Evidence: uv run python apps/ssvep_stim.py   (60 s, 4 targets 8.57/10/12/15 Hz, sampled sinusoid)
+  measured refresh 165.16 Hz (config 165 +/- 1; Windows API 165)
+  dropped frames 8 / ~9,900 = 0.08% (PASS < 0.5%); 1 interval > 2 frames
+  frame-interval SD 0.41 ms (PASS < 1 ms); median 6.055 ms, p99 7.03 ms, max 12.29 ms
+  -> sessions/20261106_002941_ssvep_stim/results.json (+ flip_times.npy)
+  Scope: stimulus alone. With the decoder thread running, the speller logs its own frame stats
+  per session (results.json "stim_frame_stats"); check them at G6.
+Decision: continue
+Next: G5 (LM Studio benchmark).
+```
+
+```
+GATE G0 — PASS   [LIVE, UN-2024.06.14, Wi-Fi OFF, single run, headset not worn]
+Evidence: uv run python apps/stream_check.py --minutes 10 --wifi off   (00:16:54, nothing else running)
+  rate from device counter 250.306 Hz over 601.7 s (within 250 +/- 1)
+  counter-gap loss 0.000% (150,608 of 150,608 samples, 0 gap events, 0 backwards)
+  counter index 15 confirmed (matches config)
+  markers: 60 sent, 60 received, 60 inside the EEG span, max |lag| 0.011 ms
+  LSL timestamp jitter vs counter fit 7.8 ms SD; sample interval p99 24.1 ms, max 61.2 ms
+  quality block all red = expected with the headset off the head (not part of G0)
+  -> sessions/20261106_001654_stream_check/results.json
+  The "Stream transmission broke off" line printed after the verdict was a shutdown-order message
+  (marker outlet closed before the recorder's inlet); fixed: inlet.close() before exit.
+Decision: continue
+Next: G4 (stimulus timing).
+```
+
+```
+GATE G0 — earlier attempt, superseded (rerun needed)   [LIVE, UN-2024.06.14, headset not worn]
+Evidence: two 10-min runs of apps/stream_check.py, started 00:00:11 (--wifi on) and 00:01:19 (--wifi off).
+  They OVERLAPPED for ~9 min, so both "wifi" labels describe the same Wi-Fi state for most of the run.
+  Measured (both runs):
+    rate from device counter 250.383 / 250.379 Hz over 588 / 601 s (within 250 +/- 1)
+    counter-gap loss 0.000% (147,194 and 150,481 samples, 0 gap events); 0 backwards steps
+    counter = index 15 (detected from data, matches config); battery 14; validation 16 = constant 1
+    LSL timestamp jitter vs counter fit: 14.2 / 12.7 ms SD; sample interval p99 24 ms, max 66.9 ms
+      (Bluetooth delivers in bursts -> offline analysis de-jitters with the counter)
+    battery channel 66.7 -> 60.0 over the runs (moves in ~6.7 steps)
+  Why both printed FAIL (test-harness bugs, not device faults; fixed in apps/stream_check.py):
+    run 1: UnicornLSL started ~12.6 s after the script (first counter = 1), so 2 of 60 sync markers
+      preceded the first EEG sample
+    run 2: both runs published a marker stream with the same name; run 2's inlet resolved run 1's stream
+      (68 s "lag" = the start-time difference; "transmission broke off" at 00:10:13 = run 1 ending)
+  Fix: per-run marker stream (unique source_id) + run id in every marker; clock starts at the first
+    EEG sample; marker |lag| limit 5 ms (device.yaml). Verified: two synthetic runs at once -> each
+    3/3 own markers, lag <= 0.03 ms. Regression test tests/test_markers.py.
+Decision: continue (the plumbing numbers meet PASS; only the marker check and the Wi-Fi-off condition are unproven)
+Next: ONE 10-min run, Wi-Fi off, nothing else running:
+  uv run python apps/stream_check.py --minutes 10 --wifi off
 ```
 
 **G2 caveats and side results (PUBLIC DATASET):**

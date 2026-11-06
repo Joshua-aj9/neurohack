@@ -230,8 +230,7 @@ class App:
                     self.finish_sentence(now)
                     phase, t_phase_end = "result", now + tm["result_s"]
                 elif phase == "feedback" and self.speller.needs_suggestions():
-                    self.request_suggestions()
-                    phase = "fetch"
+                    phase = "fetch"  # request already started at commit time (on_decision)
                 else:
                     phase, t0_stim, chosen = "stim", -1.0, None
             elif phase == "result" and now >= t_phase_end:
@@ -355,6 +354,8 @@ class App:
             action = self.speller.select(dec.target)
             if action == "undo":
                 self.n["undo"] += 1
+            if self.speller.sent_text is None and self.speller.needs_suggestions():
+                self.request_suggestions()  # overlaps the LLM call with the feedback highlight
             rec.update(action=action, text=self.speller.text)
         elif dec.kind == ABSTAIN_QUALITY:
             self.n["abstain"] += 1

@@ -7,7 +7,9 @@ timeout_s: 2.0
 n_suggestions: 3              # speller shows 3 suggestions + "more"; G5 benchmark asks for 4
 temperature: 0.4
 max_tokens: 120
-structured_output: true       # use response_format json_schema; falls back to text JSON parsing
+structured_output: false      # json_schema mode doubled completion tokens (45 vs 25 for 4 suggestions)
+                              # and p90 latency (1.19 s vs 0.70 s) on gemma-4-e4b, 6 Nov; plain mode gave
+                              # 40/40 valid JSON. Invalid output still falls back to the static list.
 
 system_prompt: >-
   You are the word-prediction engine of a communication aid for a person with ALS who selects

@@ -5,7 +5,14 @@ from __future__ import annotations
 import pytest
 
 from neurohack.closedloop import Controller
-from neurohack.llm import LLMClient, clean, fallback_suggestions, parse_suggestions
+from neurohack.llm import (
+    LLMClient,
+    clean,
+    fallback_suggestions,
+    parse_suggestions,
+    repair_suggestions,
+    strict_json_ok,
+)
 
 
 @pytest.mark.parametrize(
@@ -28,6 +35,20 @@ def test_parse_rejects_garbage():
 
 def test_clean_strips_echo_and_dupes():
     assert clean(["I am fine", "am fine", "  ", "tired"], "I") == ["am fine", "tired"]
+
+
+@pytest.mark.parametrize(
+    "partial,sug,expected",
+    [
+        ("Yes, can I", "can I have tea?", "have tea?"),  # seen live in G5 (6 Nov)
+        ("I am", "am fine", "fine"),
+        ("I would like", "to see my sister", "to see my sister"),
+        ("It is a bit", "It is a bit warm.", "warm."),
+        ("I need wa", "water please", "water please"),  # unfinished word: handled by the speller
+    ],
+)
+def test_strip_partial_overlap(partial, sug, expected):
+    assert clean([sug], partial) == [expected]
 
 
 def test_fallback_extends_partial(cfgs):
@@ -65,3 +86,27 @@ def test_controller_hysteresis_and_refractory():
 def test_controller_rejects_bad_hysteresis():
     with pytest.raises(ValueError):
         Controller(0.5, 1.0, 1.0)
+
+
+LIVE_MALFORMED = (  # gemma-4-e4b reply from the G5 rerun, 6 Nov (missing closing bracket)
+    '{"suggestions": ["Yes, I would like", "No, thank you.", "Maybe some water", "Just a little"}'
+)
+
+
+def test_repair_recovers_missing_bracket():
+    want = ["Yes, I would like", "No, thank you.", "Maybe some water", "Just a little"]
+    assert repair_suggestions(LIVE_MALFORMED) == want
+    assert parse_suggestions(LIVE_MALFORMED) == want
+    assert not strict_json_ok(LIVE_MALFORMED, 4)
+
+
+def test_repair_handles_escapes_and_truncation():
+    assert repair_suggestions('{"suggestions": ["say \\"hi\\"", "b", "trunc') == ['say "hi"', "b"]
+    assert repair_suggestions("no list here") == []
+
+
+def test_strict_json_ok():
+    assert strict_json_ok('{"suggestions": ["a", "b", "c"]}', 3)
+    assert strict_json_ok('```json\n{"suggestions": ["a", "b", "c"]}\n```', 3)
+    assert not strict_json_ok('{"suggestions": ["a", "b"]}', 3)
+    assert not strict_json_ok('Sure! {"suggestions": ["a", "b", "c"]}', 3)

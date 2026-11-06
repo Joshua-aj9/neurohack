@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -138,7 +139,9 @@ def verdict(res: dict, device_cfg: dict) -> tuple[str, list[str]]:
     rate = res.get("rate_from_counter_hz", res["rate_from_timestamps_hz"])
     if abs(rate - device_cfg["srate"]) > tol:
         status = "FAIL"
-        notes.append(f"rate {rate:.3f} Hz outside {device_cfg['srate']}±{tol}")
+        notes.append(f"rate {rate:.3f} Hz outside {device_cfg['srate']}+/-{tol}")
+    else:
+        notes.append(f"rate {rate:.3f} Hz within {device_cfg['srate']}+/-{tol}")
     if not res["counter_index_detected"]:
         status = "FAIL"
         notes.append("no counter channel detected (split-mode stream? use combined 'Data' stream)")
@@ -149,6 +152,8 @@ def verdict(res: dict, device_cfg: dict) -> tuple[str, list[str]]:
                 f"{res['counter_index_config']} -> fix configs/device.yaml channel_index"
             )
             status = "PARTIAL" if status == "PASS" else status
+        else:
+            notes.append(f"counter at index {res['counter_index_detected'][0]} (matches config)")
         loss = res["gaps"]["loss_frac"]
         if loss > 0.01:
             status = "FAIL"
@@ -159,11 +164,19 @@ def verdict(res: dict, device_cfg: dict) -> tuple[str, list[str]]:
             f"{res['gaps']['n_gap_events']} gap events, max gap {res['gaps']['max_gap']})"
         )
     m = res["markers"]
-    if m["received"] < m["sent"] or m["inside_eeg_span"] < m["received"]:
-        status = "FAIL" if status != "FAIL" else status
-        notes.append(
-            f"markers: sent {m['sent']} received {m['received']} inside EEG span {m['inside_eeg_span']}"
-        )
+    max_lag = device_cfg["lsl"]["marker_max_lag_ms"]
+    lag = m["lag_ms_max_abs"]
+    if (
+        m["received"] < m["sent"]
+        or m["inside_eeg_span"] < m["received"]
+        or lag is None
+        or lag > max_lag
+    ):
+        status = "FAIL"
+    notes.append(
+        f"markers: sent {m['sent']} received {m['received']} inside EEG span {m['inside_eeg_span']}, "
+        f"max |lag| {lag if lag is None else round(lag, 3)} ms (limit {max_lag} ms)"
+    )
     return status, notes
 
 
@@ -174,6 +187,7 @@ def main() -> None:
     ap.add_argument("--wifi", choices=["on", "off", "unknown"], default="unknown")
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--marker-every-s", type=float, default=10.0)
+    ap.add_argument("--wait-s", type=float, default=60.0, help="max wait for the first EEG sample")
     add_electrodes_arg(ap, required_for_live=False)  # G0 tests plumbing; contact does not matter
     args = ap.parse_args()
     print("LSL streams visible:")
@@ -198,14 +212,41 @@ def main() -> None:
     )
     if src.info.meta:
         print(f"  stream meta: {src.info.meta}")
+    # Own marker stream (unique source_id) + run id in every marker value, so a second copy of this
+    # script running at the same time cannot cross-talk (seen on Fri 6 Nov: two G0 runs overlapped).
+    run_id = f"{os.getpid()}_{int(time.time())}"
     outlet = MarkerOutlet(
-        device_cfg["lsl"]["marker_stream_name"], device_cfg["lsl"]["marker_stream_type"]
+        device_cfg["lsl"]["marker_stream_name"] + "_check",
+        device_cfg["lsl"]["marker_stream_type"],
+        source_id=f"stream_check_{run_id}",
     )
     time.sleep(0.5)
-    inlet = MarkerInlet(device_cfg["lsl"]["marker_stream_name"])
+    inlet = MarkerInlet(source_id=outlet.source_id)
     rec = Recorder(src, sess.dir, marker_inlet=inlet)
     rec.start()
     sent: list[tuple[float, str]] = []
+    # The clock starts at the first EEG sample, so no sync marker can precede the data.
+    t_wait = time.time()
+    next_wait_print = t_wait
+    while rec.snapshot()[1].size == 0:
+        now = time.time()
+        if now - t_wait > args.wait_s:
+            rec.stop()
+            inlet.close()
+            src.stop()
+            print(
+                f"GATE G0 - FAIL   [{label}]  no EEG samples within {args.wait_s:.0f} s "
+                "(press Start in UnicornLSL, then re-run)"
+            )
+            sys.exit(1)
+        if now >= next_wait_print:
+            print("  waiting for the first EEG sample (is UnicornLSL acquiring?)", flush=True)
+            next_wait_print += 5.0
+        time.sleep(0.05)
+    print(
+        f"  data flowing after {time.time() - t_wait:.1f} s; {args.minutes:g}-min clock starts now",
+        flush=True,
+    )
     t_end = time.time() + args.minutes * 60
     next_marker = time.time() + 2.0
     next_print = time.time() + 10.0
@@ -213,7 +254,7 @@ def main() -> None:
         while time.time() < t_end:
             now = time.time()
             if now >= next_marker:
-                v = json.dumps({"event": "sync", "i": len(sent)})
+                v = json.dumps({"event": "sync", "run": run_id, "i": len(sent)})
                 t = pylsl.local_clock()
                 outlet.outlet.push_sample([v], t)
                 sent.append((t, v))
@@ -235,6 +276,7 @@ def main() -> None:
         print("interrupted; analysing what was recorded")
     time.sleep(0.5)
     rec.stop()
+    inlet.close()
     src.stop()
     data, ts = rec.snapshot()
     if ts.size < 100:
