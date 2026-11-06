@@ -1,6 +1,7 @@
 # Per-channel signal quality over a rolling window. Each check maps its metric to a penalty in
 # [0,1] with a linear ramp between `warn` (penalty 0) and `bad` (penalty 1).
 # Channel score = prod(1 - penalty). Reasons are emitted for penalty >= reason_min_penalty.
+# flatline / railing / emg use the DECODER-FILTERED signal; clipping and line_noise use the RAW one.
 window_s: 1.0
 reason_min_penalty: 0.5
 good_min: 0.7                 # UI: green >= good_min, amber >= decoder.stopping.quality_min, red below
@@ -14,11 +15,10 @@ railing:                      # peak-to-peak of detrended signal, uV (higher is 
 clipping:                     # fraction of samples stuck at window min/max (higher is worse)
   warn: 0.02
   bad: 0.10
-line_noise:                   # P(48-52 Hz) / P(1-45 Hz) on raw signal (higher is worse)
-  band_hz: [48.0, 52.0]
-  ref_band_hz: [1.0, 45.0]
-  warn: 0.5
-  bad: 2.0
+line_noise:                   # CONTACT check: mains RMS (uV) in band_hz of the RAW signal (higher is worse)
+  band_hz: [48.0, 52.0]       # LIVE 6 Nov, PO7/Oz/PO8 per 1 s window: saline 8.7-20.7, dry 449-663 uV
+  warn_uv: 50.0               # HEURISTIC from those two recordings (1 person, 1 room): re-check at the venue
+  bad_uv: 200.0
 emg:                          # P(20-45 Hz) / P(1-20 Hz) (higher is worse)
   band_hz: [20.0, 45.0]
   ref_band_hz: [1.0, 20.0]
@@ -34,3 +34,18 @@ motion:                       # applied to all channels
 counter:                      # fraction of samples lost (counter gaps), applied to all channels
   warn: 0.001
   bad: 0.02
+
+# apps/contact_check.py: eyes-open / eyes-closed contact test (src/neurohack/eval/contact.py)
+contact_check:
+  settle_s: 5.0               # discarded at the start (filter transient, sit still)
+  blocks: [open, closed, open, closed]
+  block_s: 15.0
+  transition_s: 2.0           # discarded after each cue (reaction time, eye movement)
+  segment_s: 2.0              # alpha power per non-overlapping segment
+  alpha_band_hz: [8.0, 12.0]
+  alpha_ratio_min: 1.5        # HEURISTIC (not validated): closed/open alpha power on a channel
+  alpha_p_max: 0.05           # one-sided Mann-Whitney U, closed > open
+  common_mode_corr_warn: 0.9  # mean |r| between channels after notch+bandpass
+  beep_hz: 880
+  beep_ms: 250
+  beep_gap_ms: 150

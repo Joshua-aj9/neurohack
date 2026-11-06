@@ -3,9 +3,11 @@
 ## 1. Startup checklist (in order)
 1. Plug the CSR8510 dongle into the **same USB port** as during pairing. Do not touch drivers, Bluetooth or power settings.
 2. Laptop on mains power. Close Teams, OneDrive, browsers and game launchers, which cause frame drops.
-3. Fit the headset. With gel, apply it at **PO7, Oz, PO8** (and Pz if G3 selected it). Without gel (dry), part the hair
-   under those electrodes so the pins touch scalp. The reference/ground mastoid pads go on either way. Pass the
-   matching `--electrodes gel|dry|saline` to every LIVE app.
+3. Fit the headset. Clean the skin behind both ears and stick on the reference/ground pads (fresh ones if possible).
+   **Wet PO7, Oz, PO8 with saline** (and Pz if G3 selected it): part the hair, work the pins to the scalp, no drips
+   between electrodes. LIVE 6 Nov: saline cut mains on those channels from ~500 to 11–17 µV; dry electrodes fail
+   the contact check, so the decoder abstains. Re-wet between long runs. Pass the matching
+   `--electrodes saline` (or gel / dry) to every LIVE app.
 4. Start **Unicorn Suite → UnicornLSL**. Select the device, **Open**, choose combined ("Data") mode, then **Start**.
 5. Start **LM Studio** → Developer → load the G5-chosen model → **Start Server** (port 1234).
 6. **Wi-Fi OFF** using the Wi-Fi toggle only. Do NOT use airplane mode: it can also switch off the Bluetooth dongle.
@@ -15,9 +17,15 @@
    uv run python apps/stream_check.py --minutes 1 --wifi off
    ```
    Expect `GATE G0 - PASS`, rate 250 ± 1 Hz, loss ≤ 0.1%.
-8. Check signal quality by eye. Everything should be green; clench your jaw and the reason line should name EMG.
+8. Check signal quality by eye. PO7/Oz/PO8 should be green; unwetted channels may stay red ("50 Hz, poor
+   contact"), which is expected. Clench your jaw and the reason line should name EMG.
    ```powershell
    uv run python apps/quality_viewer.py --source lsl
+   ```
+   Then the measured version (1 min; one beep = close eyes, two beeps = open). It needs
+   `CONTACT CHECK - EEG VISIBLE` on at least one decoder channel before G3 or the demo:
+   ```powershell
+   uv run python apps/contact_check.py --electrodes dry   # or gel / saline
    ```
 9. Set the display refresh to what `configs/stim.yaml` says (`refresh_hz`). The stimulus apps refuse to run on a mismatch.
 

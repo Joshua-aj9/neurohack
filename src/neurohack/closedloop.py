@@ -113,8 +113,11 @@ class ProtocolRunner:
         v = bandpower_feature(x[self.feat_idx], self.srate, tuple(fc["band_hz"]), ref)
         a = fc["smoothing_alpha"]
         self.ema = v if self.ema is None else a * v + (1 - a) * self.ema
-        raw, _ = self.raw.latest(int(self.qcfg["window_s"] * self.srate))
-        q = assess(raw[self.eeg_idx], self.srate, self.eeg_names, self.qcfg)
+        nq = int(self.qcfg["window_s"] * self.srate)
+        raw, _ = self.raw.latest(nq)
+        filt, _ = self.buf.latest(nq)
+        filt = filt if filt.shape == raw[self.eeg_idx].shape else None
+        q = assess(raw[self.eeg_idx], self.srate, self.eeg_names, self.qcfg, filtered=filt)
         quality = q.score_of(fc["channels"])
         gated = quality < self.cfg["protocol"]["quality_min"]
         fire = False if gated else self.controller.update(t_data, self.ema)

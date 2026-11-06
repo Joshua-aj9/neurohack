@@ -53,6 +53,20 @@ def test_notch_attenuates_50hz():
     assert np.std(y[0, 2500:]) < 0.05
 
 
+def test_bandstop_rejects_offcentre_mains(cfgs):
+    """LIVE 6 Nov: UK mains sat at 49.75 Hz with ~0.5-2 mV; a Q30 notch at 50.0 left ~100 uV."""
+    fs = 250.0
+    t = np.arange(10000) / fs
+    sf = StreamFilter.from_config(cfgs["decoder"]["preprocessing"], fs, 1)
+    for f0 in (49.5, 49.75, 50.0, 50.25, 50.5):
+        y = sf(1000 * np.sin(2 * np.pi * f0 * t)[None])
+        sf.reset()
+        atten_db = 20 * np.log10(np.std(y[0, 5000:]) / (1000 / np.sqrt(2)))
+        assert atten_db < -29.0, (f0, atten_db)  # measured: -32 dB at 49.5, -30 dB at 50.5
+    w, h = signal.sosfreqz(sf.sos, worN=[8.57, 10, 12, 15, 30, 45], fs=fs)
+    assert np.all(np.abs(h) > 0.85)  # SSVEP fundamentals and low harmonics untouched
+
+
 def test_car_zero_mean():
     x = np.random.default_rng(1).standard_normal((4, 100))
     np.testing.assert_allclose(car(x).mean(axis=0), 0, atol=1e-12)

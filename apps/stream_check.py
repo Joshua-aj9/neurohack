@@ -20,6 +20,7 @@ import pylsl
 
 from neurohack.config import load_config
 from neurohack.markers import MarkerInlet, MarkerOutlet
+from neurohack.preprocessing import StreamFilter
 from neurohack.quality import assess
 from neurohack.recorder import Recorder
 from neurohack.session import Session, add_electrodes_arg, resolve_electrodes
@@ -109,6 +110,9 @@ def analyse(
     }
     last = int(fs_nom)
     acc, gyr = info.picks("accel"), info.picks("gyro")
+    filt = StreamFilter.from_config(load_config("decoder")["preprocessing"], fs_nom, len(eeg_idx))(
+        eeg
+    )
     q = assess(
         eeg[:, -last:],
         fs_nom,
@@ -117,6 +121,7 @@ def analyse(
         data[acc, -last:] if acc else None,
         data[gyr, -last:] if gyr else None,
         data[counter_idx[0], -last:] if counter_idx else None,
+        filtered=filt[:, -last:],
     )
     res["quality_last_1s"] = q.as_dict()
     # marker round trip: sent (outlet time) vs received (inlet, clock-synced) — same machine => ~0

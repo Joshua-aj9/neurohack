@@ -85,6 +85,15 @@ All of the following was written on **Thu 5 Nov 2026 (evening)**, before the hac
 calibration, speller and closed-loop runs and is recorded in every session's `results.json` (`session.py`). The
 speller warns when the calibration condition differs from the current run.
 
+**Added Fri 6 Nov (afternoon, still before the event):** contact check. `src/neurohack/eval/contact.py` (generic):
+mains amplitude, raw vs filtered peak-to-peak, inter-channel correlation (shared reference noise) and eyes
+closed/open alpha reactivity. `apps/contact_check.py` runs the 1-minute protocol. `configs/quality.yaml`
+gains a `contact_check` section. Tests are in `tests/test_contact.py`. `preprocessing.design_stream_sos`
+gains an optional Butterworth band-stop. The decoder now uses 47–53 Hz instead of the 50 Hz notch, chosen
+from Joshua's LIVE dry recording (see GATES.md). `quality.assess` takes an optional `filtered` window: flatline,
+railing and EMG are scored on the decoder-filtered signal, and mains becomes an absolute-µV contact check on the
+raw signal (thresholds from the dry and saline LIVE recordings).
+
 Pre-event results (all SYNTHETIC or PUBLIC DATASET; none are LIVE) are in `GATES.md`, `results/` and `figures/`.
 
 ## Conventions

@@ -125,7 +125,7 @@ class SyntheticSource(Source):
             * self._alpha_gain_ch[:, None]
             * (alpha / self._alpha_norm)[None, :]
         )
-        line_amp = cfg["line_uv"] * (30.0 if "line" in self.artifacts else 1.0)
+        line_amp = cfg["line_artifact_uv"] if "line" in self.artifacts else cfg["line_uv"]
         eeg += line_amp * np.sin(2 * np.pi * 50.0 * t)[None, :]
         eeg += cfg["dc_uv"]
 

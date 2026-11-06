@@ -5,7 +5,9 @@ n_harmonics: 5
 visual_latency_s: 0.14        # window starts this long after stimulus onset (visual pathway delay)
 
 preprocessing:                # causal, stateful, applied to the stream before windowing
-  notch_hz: 50.0              # UK mains
+  bandstop_hz: [47.0, 53.0]   # mains. LIVE 6 Nov (dry): 0.5-2.3 mV at 49.75 Hz; on that recording this
+  bandstop_order: 2           # cut occipital 45-55 Hz RMS 103 -> 2 uV, 8-45 Hz unchanged; 48 Hz -8 dB
+  notch_hz: null              # old: 50.0 Q30 left ~100 uV because mains was off-centre (49.75 Hz)
   notch_q: 30.0
   bandpass_hz: [1.0, 90.0]
   bandpass_order: 4

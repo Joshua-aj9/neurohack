@@ -9,14 +9,14 @@ Labels: **SYNTHETIC** | **PUBLIC DATASET** | **LIVE (Joshua)**. Only measured nu
 | G0 Plumbing | **PASS** | LIVE | Fri 6 Nov 00:27 |
 | G4 Stimulus timing | **PASS** | LIVE | Fri 6 Nov 00:30 |
 | G5 LLM | **PASS with caveat**: latency PASS with Wi-Fi off; the only strict 20/20+ JSON run had Wi-Fi on | LIVE | Fri 6 Nov 00:54 |
+| Contact check (pre-G3) | dry and saline: **EEG visible** on PO7/Oz/PO8. Saline cut occipital mains ~30–50× (≈500 → 11–17 µV), alpha ratio 4.6–6.4. Decoder now uses a 47–53 Hz band-stop; quality monitor now scores the filtered signal + mains as contact (saline: 89% of windows pass) | LIVE | Fri 6 Nov 17:40 |
 | G3 Live SSVEP | WAITING FOR JOSHUA — `apps/ssvep_calibrate.py` | LIVE | — |
 | G6 Full loop | BUILT, synthetic/headless-tested; WAITING FOR G3 + JOSHUA — `apps/speller/main.py` | LIVE | — |
 | CL Closed-loop template | **PASS** synthetic part (4/4 runs); live eyes-closed test WAITING FOR JOSHUA | SYNTHETIC | Thu 5 Nov |
 | G7 ErrP (stretch) | not started (only after G6 passes) | — | — |
 
 ## Joshua: run these in order and paste the output
-All commands run from `C:\dev
-eurohack` in PowerShell. Each one prints a `GATE Gx - ...` line and the evidence path.
+All commands run from `C:\dev\neurohack` in PowerShell. Each one prints a `GATE Gx - ...` line and the evidence path.
 LIVE apps require `--electrodes gel|dry|saline|none`. It is stored in every `results.json`, and the speller
 warns if you calibrated under a different condition. G0 does not need it (plumbing only).
 
@@ -35,7 +35,8 @@ warns if you calibrated under a different condition. G0 does not need it (plumbi
    uv run python scripts/llm_bench.py --wifi off
    ```
 4. **G3** (PO7/Oz/PO8 in good contact, plus Pz if you can, dry or gel; 40 trials, about 5 min including breaks).
-   Check `apps/quality_viewer.py --source lsl` is green first:
+   First run `apps/contact_check.py --electrodes <same>`; it must say `EEG VISIBLE`. (The quality viewer
+   is red in a mains-heavy room because it scores the raw signal; see the contact-check entry below.)
    ```powershell
    uv run python apps/ssvep_calibrate.py --electrodes dry      # or gel / saline
    ```
@@ -52,6 +53,69 @@ warns if you calibrated under a different condition. G0 does not need it (plumbi
    ```
 
 ---
+
+```
+CONTACT CHECK — EEG VISIBLE on PO7, Oz, PO8   [LIVE (Joshua), dry electrodes, Fri 6 Nov 17:16]
+Evidence: uv run python apps/contact_check.py --electrodes dry
+  -> sessions/20261106_171602_contact_check_dry/ (results.json, contact_check.npz; local only)
+  protocol: 5 s settle, open/closed/open/closed x 15 s, first 2 s after each cue dropped, 2 s segments
+  mains: 50 Hz band RMS 474-2279 uV raw (occipital 473-534 uV); peak at 49.75 Hz, not 50.0
+  outside 45-55 Hz the raw signal is EEG-sized: 3-7 uV RMS per band 4-45 Hz on every channel
+    (Pz: 183 uV at 0.5-4 Hz = drift; Pz is not a decoder channel)
+  old notch (50.0 Hz, Q30) left 103-116 uV of mains on PO7/Oz/PO8; filtered ptp 340-1456 uV
+  mean |r| between channels 0.97 after filtering (the residual mains is shared), 0.75 after CAR
+  alpha closed/open (8-12 Hz power), no CAR / CAR: PO7 1.52 (p=0.005) / 2.67, Oz 1.19 (p=0.20) / 1.75
+    (p=0.002), PO8 2.71 / 5.33 (p<0.001); criterion ratio >= 1.5 and p <= 0.05 (HEURISTIC, not validated)
+  DC offsets 298-684 mV (Pz highest)
+Mains filter, chosen on this recording (scratch analysis, causal filters as online):
+  occipital 45-55 Hz RMS: notch Q30 103-116 uV; notch Q10 35-40; notch Q5 18-20;
+  band-stop 47-53 order 2: 1.9-2.0 uV (Oz 8-45 Hz RMS 8.0 uV in every variant); order 4: 1.4-1.6 uV
+  -> configs/decoder.yaml now uses band-stop 47-53 Hz order 2 (gain at 48 Hz -8 dB, all other SSVEP
+     harmonics of the default set > -1 dB); notch disabled
+  G2 rerun with the band-stop [PUBLIC DATASET, Kalunga2016 13/17/21 Hz, so the 48 Hz loss is not tested]:
+     mean acc 2 s FBCCA 0.753 (was 0.732), CCA 0.707 (was 0.689); above chance 12/12 (was 10/12);
+     FBCCA > CCA 7/12 (3 ties); held-out committed acc 0.886 (was 0.902) at commit rate 0.61 (was 0.56);
+     ECE 0.398 -> 0.016; ITR 11.8 bits/min (was 11.2) -> results/g2_moabbbandstop.json, g2_bandstop.log
+Quality monitor on the same recording (1 s windows, decoder channels >= quality_min 0.5):
+  scoring the raw signal (current): 0% of 62 windows pass (railing + 50 Hz on every channel)
+  scoring the decoder-filtered signal: 97% pass; remaining flags are EMG, mostly on Pz
+  -> changed after the saline run (see below)
+```
+
+```
+CONTACT CHECK — EEG VISIBLE on PO7, Oz, PO8   [LIVE (Joshua), saline on PO7/Oz/PO8, ear pads re-seated, 17:39]
+Evidence: uv run python apps/contact_check.py --electrodes saline
+  -> sessions/20261106_173943_contact_check_saline/ (local only)
+  decoder channels (wetted), raw 48-52 Hz RMS per 1 s window (min / median / max):
+    PO7  8.7 / 10.9 / 12.9 uV   Oz  9.0 / 10.6 / 13.8   PO8  15.3 / 17.2 / 20.7
+    same channels dry: PO7 498 / 522 / 659   Oz 449 / 476 / 613   PO8 521 / 534 / 663
+    -> no overlap: the worst saline window is >20x below the best dry window
+  raw ptp 79-102 uV (dry 1359-1521); filtered RMS 11.0-11.6 uV (dry 105-117)
+  after the band-stop, 45-55 Hz RMS 1.2-1.7 uV; Oz filtered spectrum peaks at 11.75-12.25 Hz (alpha)
+  alpha closed/open, no CAR: PO7 5.43, Oz 4.61, PO8 6.41 (all p<0.001; dry 1.52 / 1.19 / 2.71)
+  unwetted channels (Fz, C3, Cz, C4, Pz) got WORSE: 50 Hz 2.5-6.8 mV (dry 0.74-2.3 mV); 90-125 Hz
+    60-148 uV after filtering. Cause not determined from this data.
+  CAR now HURTS the decoder channels (RMS 11 -> 54 uV): it mixes in the bad channels. Decoder keeps car: false.
+  mains peak moved to 50.0 Hz (dry run: 49.75 Hz): the band-stop covers both
+  mean |r| between channels 0.43 filtered (dry 0.97)
+Quality monitor on this recording (decoder channels >= quality_min 0.5, 62 x 1 s windows):
+  raw (current): 10% pass (PO8 50 Hz ratio; PO7 near threshold)   decoder-filtered: 89% pass
+Decision for G3: wet PO7/Oz/PO8 with saline (Pz too only if it is actually wetted; it was not usable here).
+```
+
+```
+QUALITY MONITOR CHANGE (Fri 6 Nov ~17:50, agreed with Joshua)   [LIVE recordings re-scored offline]
+  flatline / railing / EMG now use the decoder-filtered signal (band-stop + bandpass); clipping and
+  mains use the raw signal. Mains became a CONTACT check: absolute 48-52 Hz RMS per 1 s window,
+  warn 50 uV / bad 200 uV (HEURISTIC, set between the two recordings: saline 8.7-20.7, dry 449-663 uV).
+  Decoder channels PO7/Oz/PO8 >= quality_min 0.5, 62 x 1 s windows:
+    saline: 10% (old) -> 89% (new); 85% >= good_min 0.7. Unwetted Fz/C3/Cz/C4/Pz flagged "50 Hz (poor contact?)".
+    dry:     0% (old) ->  0% (new); the only reason is now mains/poor contact (no false "huge amplitude").
+    -> with these thresholds a DRY setup always abstains. Dry still showed alpha reactivity, so if dry is
+       ever needed, G3-dry accuracy should decide whether to relax warn_uv/bad_uv, not this heuristic.
+  Tests: 78 passed (2 new quality tests: 500 uV mains -> contact flag, no railing; 15 uV mains -> no penalty).
+  CL synthetic gate rerun: PASS. G1 not rerun (quality now also reads the filtered buffer; no timing check yet).
+```
 
 ```
 GATE G1 — PASS   [SYNTHETIC]

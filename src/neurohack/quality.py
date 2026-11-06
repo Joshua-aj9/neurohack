@@ -1,6 +1,10 @@
 """Per-channel signal quality in [0, 1] with human-readable reasons. Pure functions.
 
-Operates on RAW (un-notched) EEG so line noise is measurable. Thresholds live in quality.yaml.
+Two views of the same window (thresholds in quality.yaml):
+  - RAW signal: clipping (true amplifier limits) and mains amplitude, used as an electrode-CONTACT check.
+    LIVE 6 Nov: wetted electrodes picked up ~11-17 uV of mains, dry ones ~500 uV (Joshua's room).
+  - DECODER-FILTERED signal (mains band-stop + bandpass, what the decoder sees): flatline, railing
+    (movement / drift), EMG. Scoring these on the raw signal let mains alone zero every window.
 """
 
 from __future__ import annotations
@@ -58,6 +62,12 @@ def psd(x: np.ndarray, srate: float) -> tuple[np.ndarray, np.ndarray]:
     return signal.welch(x, fs=srate, nperseg=min(n, int(srate)), axis=-1, detrend="linear")
 
 
+def band_rms(x: np.ndarray, srate: float, band: tuple[float, float]) -> np.ndarray:
+    """RMS amplitude (uV) of each row inside `band`, from the Welch PSD used by every check."""
+    f, pxx = psd(x, srate)
+    return np.sqrt(band_power(f, pxx, band) * (f[1] - f[0]))
+
+
 def counter_loss(counter: np.ndarray) -> float:
     """Fraction of samples lost, from gaps in a +1-incrementing sample counter."""
     c = np.asarray(counter, dtype=float)
@@ -77,10 +87,12 @@ def assess(
     accel: np.ndarray | None = None,
     gyro: np.ndarray | None = None,
     counter: np.ndarray | None = None,
+    filtered: np.ndarray | None = None,
 ) -> QualityReport:
-    """eeg [n_ch, n] raw microvolts over the quality window -> QualityReport."""
+    """eeg [n_ch, n] RAW microvolts over the quality window; filtered [n_ch, n] the same window after
+    the decoder's preprocessing (None: use raw for every check)."""
     n_ch = eeg.shape[0]
-    x = signal.detrend(eeg, axis=1, type="linear")
+    x = signal.detrend(eeg if filtered is None else filtered, axis=1, type="linear")
     f, pxx = psd(x, srate)
     metrics: dict[str, np.ndarray] = {}
     pen: dict[str, np.ndarray] = {}
@@ -97,10 +109,10 @@ def assess(
 
     ln = cfg["line_noise"]
     eps = 1e-12
-    metrics["line_noise"] = band_power(f, pxx, ln["band_hz"]) / (
-        band_power(f, pxx, ln["ref_band_hz"]) + eps
+    metrics["line_noise"] = band_rms(
+        signal.detrend(eeg, axis=1, type="linear"), srate, ln["band_hz"]
     )
-    pen["line_noise"] = ramp(metrics["line_noise"], ln["warn"], ln["bad"])
+    pen["line_noise"] = ramp(metrics["line_noise"], ln["warn_uv"], ln["bad_uv"])
     em = cfg["emg"]
     metrics["emg"] = band_power(f, pxx, em["band_hz"]) / (
         band_power(f, pxx, em["ref_band_hz"]) + eps

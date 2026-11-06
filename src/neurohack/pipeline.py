@@ -82,9 +82,10 @@ class OnlinePipeline:
     def quality(self, t_end: float | None = None) -> QualityReport:
         n = int(self.qcfg["window_s"] * self.srate)
         data, ts = self.raw.latest(n)
+        filt, fts = self.filt.latest(n)  # appended together with raw -> same timestamps
         if t_end is not None and ts.size:
-            keep = ts <= t_end
-            data = data[:, keep][:, -n:]
+            data = data[:, ts <= t_end][:, -n:]
+            filt = filt[:, fts <= t_end][:, -n:]
         eeg = data[self.eeg_idx]
         if eeg.shape[1] < 8:
             return assess(
@@ -96,7 +97,8 @@ class OnlinePipeline:
         acc = data[self.acc_idx] if self.acc_idx else None
         gyr = data[self.gyr_idx] if self.gyr_idx else None
         cnt = data[self.cnt_idx[0]] if self.cnt_idx else None
-        return assess(eeg, self.srate, self.eeg_names, self.qcfg, acc, gyr, cnt)
+        filt = filt if filt.shape == eeg.shape else None
+        return assess(eeg, self.srate, self.eeg_names, self.qcfg, acc, gyr, cnt, filtered=filt)
 
     # ---- decoding ------------------------------------------------------------------------
     def window(self, onset: float, length_s: float) -> np.ndarray | None:

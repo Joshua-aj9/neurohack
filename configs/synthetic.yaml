@@ -5,6 +5,7 @@ white_uv: 2.0
 alpha_uv: 6.0                 # background alpha (10 Hz) amplitude on posterior channels
 alpha_hz: 10.0
 line_uv: 3.0                  # 50 Hz mains amplitude
+line_artifact_uv: 500.0       # mains sine amplitude with the "line" artifact on (RMS 354; LIVE dry: 449-663 RMS)
 dc_uv: 0.0
 ssvep:
   amplitude_uv: 5.0           # fundamental on Oz (PO7/PO8 get spatial_gain * this). ARBITRARY SNR:

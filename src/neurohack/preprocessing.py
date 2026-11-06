@@ -12,9 +12,18 @@ def design_stream_sos(
     notch_q: float,
     bandpass_hz: tuple[float, float] | None,
     order: int,
+    bandstop_hz: tuple[float, float] | None = None,
+    bandstop_order: int = 2,
 ) -> np.ndarray:
-    """Second-order sections for notch (optional) followed by Butterworth bandpass (optional)."""
+    """SOS for: Butterworth bandstop (optional; broad mains rejection), notch (optional),
+    Butterworth bandpass (optional)."""
     parts = []
+    if bandstop_hz:
+        parts.append(
+            signal.butter(
+                bandstop_order, list(bandstop_hz), btype="bandstop", fs=srate, output="sos"
+            )
+        )
     if notch_hz:
         b, a = signal.iirnotch(notch_hz, notch_q, fs=srate)
         parts.append(signal.tf2sos(b, a))
@@ -43,6 +52,8 @@ class StreamFilter:
             pre_cfg.get("notch_q", 30.0),
             pre_cfg.get("bandpass_hz"),
             pre_cfg.get("bandpass_order", 4),
+            pre_cfg.get("bandstop_hz"),
+            pre_cfg.get("bandstop_order", 2),
         )
         return cls(sos, n_channels)
 

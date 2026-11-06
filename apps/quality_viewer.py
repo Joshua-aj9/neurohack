@@ -100,6 +100,7 @@ def main() -> None:
         nq = int(qcfg["window_s"] * fs)
         if raw.n_available >= nq:
             r, _ = raw.latest(nq)
+            rf, _ = filt.latest(nq)
             q = assess(
                 r[eeg],
                 fs,
@@ -108,6 +109,7 @@ def main() -> None:
                 r[acc] if acc else None,
                 r[gyr] if gyr else None,
                 r[cnt[0]] if cnt else None,
+                filtered=rf if rf.shape[1] == nq else None,
             )
             x, _ = filt.latest(int(TRACE_S * fs))
             row_h = 70
